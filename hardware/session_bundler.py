@@ -17,7 +17,10 @@ import requests
 # ─── MIDI note number → human-readable note name (C4 = middle C = 60) ───────
 NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
-API_ENDPOINT = os.getenv("API_ENDPOINT", "http://localhost:8000/sessions")
+API_ENDPOINT = os.getenv(
+    "API_ENDPOINT",
+    "https://piano-tracker-api-production-d7b7.up.railway.app/sessions",
+)
 
 def note_number_to_name(note: int) -> str:
     """Convert MIDI note number to name, e.g. 60 → 'C4'"""
