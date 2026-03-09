@@ -11,9 +11,13 @@ import sys
 import json
 import time
 from datetime import datetime
+import os
+import requests
 
 # ─── MIDI note number → human-readable note name (C4 = middle C = 60) ───────
 NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+API_ENDPOINT = os.getenv("API_ENDPOINT", "http://localhost:8000/sessions")
 
 def note_number_to_name(note: int) -> str:
     """Convert MIDI note number to name, e.g. 60 → 'C4'"""
@@ -119,6 +123,15 @@ def bundle_session(port_name: str):
                             print("🎹  Session ended. JSON output:")
                             print(json.dumps(session, indent=2))
                             print()
+                            try:
+                                response = requests.post(API_ENDPOINT, json=session, timeout=10)
+                                if response.status_code == 200:
+                                    data = response.json()
+                                    print(f"✅ Session uploaded (id: {data['id']})")
+                                else:
+                                    print(f"⚠️  Upload failed: {response.status_code} {response.text}")
+                            except Exception as e:
+                                print(f"⚠️  Upload failed: {e}")
                         elif session:
                             print("🎹  Session discarded (0 notes).")
                         # Reset for next session
@@ -140,6 +153,15 @@ def bundle_session(port_name: str):
                 })
                 print("\n🎹  Session interrupted. JSON output:")
                 print(json.dumps(session, indent=2))
+                try:
+                    response = requests.post(API_ENDPOINT, json=session, timeout=10)
+                    if response.status_code == 200:
+                        data = response.json()
+                        print(f"✅ Session uploaded (id: {data['id']})")
+                    else:
+                        print(f"⚠️  Upload failed: {response.status_code} {response.text}")
+                except Exception as e:
+                    print(f"⚠️  Upload failed: {e}")
             print("\nGoodbye! 🎹")
 
 def main():
