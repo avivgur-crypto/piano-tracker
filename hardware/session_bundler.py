@@ -22,11 +22,48 @@ API_ENDPOINT = os.getenv(
     "https://piano-tracker-api-production-d7b7.up.railway.app/sessions",
 )
 
+DEVICE_ID = os.environ.get("DEVICE_ID", "pi-001")
+FAILED_SESSIONS_PATH = os.path.join(os.path.dirname(__file__), "failed_sessions.jsonl")
+
 def note_number_to_name(note: int) -> str:
     """Convert MIDI note number to name, e.g. 60 → 'C4'"""
     octave = (note // 12) - 1
     name = NOTE_NAMES[note % 12]
     return f"{name}{octave}"
+
+
+def save_failed_session(session: dict):
+    """Persist failed sessions locally so they can be retried later."""
+    try:
+        with open(FAILED_SESSIONS_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(session, ensure_ascii=False) + "\n")
+        print(f"💾 Saved failed session to {FAILED_SESSIONS_PATH}")
+    except Exception as e:
+        print(f"❌ Failed to save session locally: {e}")
+
+
+def upload_session(session: dict) -> bool:
+    """Upload a session to the API with retries and exponential backoff."""
+    for attempt in range(1, 4):
+        try:
+            response = requests.post(API_ENDPOINT, json=session, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                print(f"✅ Session uploaded (id: {data.get('id')})")
+                return True
+            else:
+                print(f"⚠️  Upload failed (attempt {attempt}/3): {response.status_code} {response.text}")
+        except Exception as e:
+            print(f"⚠️  Upload failed (attempt {attempt}/3): {e}")
+
+        if attempt < 3:
+            delay = 5 * (2 ** (attempt - 1))
+            print(f"⏳ Retrying in {delay}s...")
+            time.sleep(delay)
+
+    save_failed_session(session)
+    return False
+
 
 def list_ports():
     """List all available MIDI input ports."""
@@ -116,7 +153,7 @@ def bundle_session(port_name: str):
                             # End session
                             ended_at = datetime.now()
                             session.update({
-                                "device_id": "pi-001",
+                                "device_id": DEVICE_ID,
                                 "started_at": start_datetime.isoformat(),
                                 "ended_at": ended_at.isoformat(),
                                 "duration_seconds": int((ended_at - start_datetime).total_seconds()),
@@ -126,15 +163,7 @@ def bundle_session(port_name: str):
                             print("🎹  Session ended. JSON output:")
                             print(json.dumps(session, indent=2))
                             print()
-                            try:
-                                response = requests.post(API_ENDPOINT, json=session, timeout=10)
-                                if response.status_code == 200:
-                                    data = response.json()
-                                    print(f"✅ Session uploaded (id: {data['id']})")
-                                else:
-                                    print(f"⚠️  Upload failed: {response.status_code} {response.text}")
-                            except Exception as e:
-                                print(f"⚠️  Upload failed: {e}")
+                            upload_session(session)
                         elif session:
                             print("🎹  Session discarded (0 notes).")
                         # Reset for next session
@@ -147,7 +176,7 @@ def bundle_session(port_name: str):
             if session and total_notes > 0:
                 ended_at = datetime.now()
                 session.update({
-                    "device_id": "pi-001",
+                    "device_id": DEVICE_ID,
                     "started_at": start_datetime.isoformat(),
                     "ended_at": ended_at.isoformat(),
                     "duration_seconds": int((ended_at - start_datetime).total_seconds()),
@@ -156,15 +185,7 @@ def bundle_session(port_name: str):
                 })
                 print("\n🎹  Session interrupted. JSON output:")
                 print(json.dumps(session, indent=2))
-                try:
-                    response = requests.post(API_ENDPOINT, json=session, timeout=10)
-                    if response.status_code == 200:
-                        data = response.json()
-                        print(f"✅ Session uploaded (id: {data['id']})")
-                    else:
-                        print(f"⚠️  Upload failed: {response.status_code} {response.text}")
-                except Exception as e:
-                    print(f"⚠️  Upload failed: {e}")
+                upload_session(session)
             print("\nGoodbye! 🎹")
 
 def main():

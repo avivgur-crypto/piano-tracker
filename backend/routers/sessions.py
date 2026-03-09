@@ -5,16 +5,22 @@ from database import get_db
 from models import Session as DBSession
 from schemas import SessionCreate, SessionResponse
 from typing import List
-from datetime import datetime
+from datetime import datetime, timezone
 
 router = APIRouter()
+
+
+def parse_dt(s: str) -> datetime:
+    # Supports both naive ISO datetime and ISO with Z suffix.
+    s = s.replace("Z", "+00:00")
+    return datetime.fromisoformat(s)
 
 @router.post("/sessions", response_model=SessionResponse)
 async def create_session(session: SessionCreate, db: AsyncSession = Depends(get_db)):
     db_session = DBSession(
         device_id=session.device_id,
-        started_at=datetime.fromisoformat(session.started_at),
-        ended_at=datetime.fromisoformat(session.ended_at),
+        started_at=parse_dt(session.started_at),
+        ended_at=parse_dt(session.ended_at),
         duration_seconds=session.duration_seconds,
         total_notes=session.total_notes,
         events=[event.dict() for event in session.events]
