@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: piano-tracker-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+
+databases:
+  - name: piano-tracker-db
+    plan: free
+    databaseName: piano_tracker
