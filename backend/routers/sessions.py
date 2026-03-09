@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from ..database import get_db
-from ..models import Session as DBSession
-from ..schemas import SessionCreate, SessionResponse
+from database import get_db
+from models import Session as DBSession
+from schemas import SessionCreate, SessionResponse
 from typing import List
 from datetime import datetime
 
