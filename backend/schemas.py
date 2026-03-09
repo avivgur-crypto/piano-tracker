@@ -54,3 +54,36 @@ class AuthResponse(Token):
 class TokenData(BaseModel):
     email: Optional[str] = None
     user_id: Optional[int] = None
+
+
+# --- Communication schemas ---
+
+class HomeworkCreate(BaseModel):
+    student_id: int
+    title: str
+    instruction: Optional[str] = None
+    deadline: Optional[datetime] = None
+
+
+class HomeworkOut(BaseModel):
+    id: int
+    teacher_id: int
+    student_id: int
+    title: str
+    instruction: Optional[str]
+    deadline: Optional[datetime]
+    status: str
+    created_at: datetime
+
+
+class TeacherNoteCreate(BaseModel):
+    student_id: int
+    text: str
+
+
+class TeacherNoteOut(BaseModel):
+    id: int
+    teacher_id: int
+    student_id: int
+    text: str
+    created_at: datetime
