@@ -1,0 +1,20 @@
+[Unit]
+Description=Piano Tracker MIDI Session Bundler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/piano-tracker/hardware
+Environment=API_ENDPOINT=https://piano-tracker-api-production-d7b7.up.railway.app/sessions
+Environment=DEVICE_ID=pi-001
+ExecStartPre=/bin/sleep 10
+ExecStart=/usr/bin/python3 /home/pi/piano-tracker/hardware/session_bundler.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
