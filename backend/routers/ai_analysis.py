@@ -2,7 +2,7 @@ import json
 import os
 from typing import List
 
-import google.generativeai as genai
+from google import genai
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -15,7 +15,7 @@ from schemas import AIReportOut, AnalyzeSessionRequest, PieceOut
 router = APIRouter()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 
 def ensure_teacher(user: User):
@@ -45,7 +45,6 @@ async def upload_piece(
 
     pdf_bytes = await file.read()
 
-    model = genai.GenerativeModel("gemini-1.5-flash")
     prompt = (
         "You are a music theory expert. Analyze this sheet music PDF and extract "
         "the following in JSON format:\n"
@@ -58,11 +57,12 @@ async def upload_piece(
         "Return ONLY valid JSON, no markdown fences."
     )
 
-    response = model.generate_content(
-        [
+    response = client.models.generate_content(
+        model="gemini-1.5-flash",
+        contents=[
             prompt,
             {"mime_type": "application/pdf", "data": pdf_bytes},
-        ]
+        ],
     )
 
     raw_text = response.text.strip()
@@ -129,7 +129,6 @@ async def analyze_session(
 
     midi_events = json.dumps(session.events or [])
 
-    model = genai.GenerativeModel("gemini-1.5-flash")
     prompt = (
         "You are an expert piano teacher AI assistant.\n\n"
         f"{piece_context}"
@@ -147,7 +146,10 @@ async def analyze_session(
         "Return ONLY valid JSON, no markdown fences."
     )
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(
+        model="gemini-1.5-flash",
+        contents=prompt,
+    )
     raw_text = response.text.strip()
     if raw_text.startswith("```"):
         raw_text = raw_text.split("\n", 1)[1]
