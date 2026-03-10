@@ -87,3 +87,28 @@ class TeacherNoteOut(BaseModel):
     student_id: int
     text: str
     created_at: datetime
+
+
+# --- AI Analysis schemas ---
+
+class PieceOut(BaseModel):
+    id: int
+    teacher_id: int
+    student_id: int
+    title: str
+    analysis_json: Optional[dict] = None
+    created_at: datetime
+
+
+class AIReportOut(BaseModel):
+    id: int
+    session_id: Optional[int] = None
+    student_id: int
+    teacher_report: Optional[str] = None
+    student_report: Optional[str] = None
+    created_at: datetime
+
+
+class AnalyzeSessionRequest(BaseModel):
+    session_id: int
+    student_id: int

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, JSON, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, JSON, ForeignKey, Text
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
 
@@ -48,4 +48,26 @@ class TeacherNote(Base):
     teacher_id = Column(Integer, ForeignKey("users.id"))
     student_id = Column(Integer, ForeignKey("users.id"))
     text = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Piece(Base):
+    __tablename__ = "pieces"
+
+    id = Column(Integer, primary_key=True)
+    teacher_id = Column(Integer, ForeignKey("users.id"))
+    student_id = Column(Integer, ForeignKey("users.id"))
+    title = Column(String, nullable=False)
+    analysis_json = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AIReport(Base):
+    __tablename__ = "ai_reports"
+
+    id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, ForeignKey("sessions.id"), nullable=True)
+    student_id = Column(Integer, ForeignKey("users.id"))
+    teacher_report = Column(Text)
+    student_report = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)

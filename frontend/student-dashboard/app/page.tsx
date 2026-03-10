@@ -1,4 +1,5 @@
 import { Achievements } from "@/components/Achievements";
+import { AIInsights } from "@/components/AIInsights";
 import { HomeworkCard } from "@/components/HomeworkCard";
 import { TeacherNotes } from "@/components/TeacherNotes";
 import { WeeklyPracticeGraph } from "@/components/WeeklyPracticeGraph";
@@ -62,6 +63,10 @@ export default function Home() {
           <div className="mt-3 h-3 w-full overflow-hidden rounded-full bg-white/10">
             <div className="h-full w-[83%] rounded-full bg-[#58CC02] transition-all duration-1000" />
           </div>
+        </section>
+
+        <section className="mt-10">
+          <AIInsights />
         </section>
 
         <section className="mt-10 grid gap-6 lg:grid-cols-3">

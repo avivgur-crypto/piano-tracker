@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from routers import ai_analysis
 from routers import auth as auth_router
 from routers import communication
 from routers import sessions
@@ -32,6 +33,7 @@ async def startup():
 app.include_router(auth_router.router, prefix="/auth")
 app.include_router(sessions.router)
 app.include_router(communication.router, prefix="/communication")
+app.include_router(ai_analysis.router, prefix="/ai")
 
 @app.get("/health")
 def health():
