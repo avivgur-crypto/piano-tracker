@@ -7,6 +7,15 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-[#1C1F2E] px-6 pb-12 pt-24">
       <div className="mx-auto max-w-6xl">
+        <div className="mb-10 rounded-2xl bg-gradient-to-br from-[#1C1F2E] to-[#1a2a1a] p-6 shadow-lg shadow-[#58CC02]/20">
+          <h1 className="text-3xl font-bold text-white">
+            Welcome to your practice zone
+          </h1>
+          <p className="mt-2 text-sm text-[#A3FFB5]">
+            Keep the groove going — your progress is lighting up the keys.
+          </p>
+        </div>
+
         <header className="mb-10">
           <h1 className="text-4xl font-bold text-white">Hey Danny! 👋</h1>
           <p className="mt-2 text-sm text-[#B0B7D6]">

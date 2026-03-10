@@ -4,11 +4,14 @@ import { Music, User } from "lucide-react";
 
 export function Navbar() {
   return (
-    <header className="fixed left-0 right-0 top-0 z-50 h-16 border-b border-[#2D3748] bg-[var(--bg-card)]">
+    <header className="fixed left-0 right-0 top-0 z-50 h-16 border-l-4 border-l-[#6C63FF] bg-[#0F1117]">
       <div className="mx-auto flex h-full max-w-6xl items-center justify-between px-4">
         <div className="flex items-center gap-3">
           <Music className="h-6 w-6 text-[var(--accent)]" />
           <span className="text-white text-lg font-bold">Piano Tracker</span>
+          <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-[#CBD5E1]">
+            Teacher Portal
+          </span>
         </div>
 
         <div className="flex items-center gap-3">

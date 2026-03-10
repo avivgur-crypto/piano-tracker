@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { getToken } from "../lib/auth";
 
 const students = [
   { id: 2, name: "Danny Cohen" },
@@ -10,16 +11,6 @@ const students = [
 ];
 
 type Tab = "homework" | "notes";
-
-function getToken() {
-  // Token might be stored under different keys depending on auth implementation.
-  return (
-    localStorage.getItem("token") ||
-    localStorage.getItem("access_token") ||
-    localStorage.getItem("authToken") ||
-    ""
-  );
-}
 
 export function CommunicationHub() {
   const [activeTab, setActiveTab] = useState<Tab>("homework");
@@ -60,19 +51,24 @@ export function CommunicationHub() {
     }
 
     try {
+      const payload = {
+        student_id: parseInt(String(studentId), 10),
+        title: hwTitle,
+        instruction: hwInstruction,
+        deadline: hwDeadline ? new Date(hwDeadline).toISOString() : null,
+      };
+
+      console.log("[homework] sending", payload);
+
       const res = await fetch("http://localhost:8000/communication/homework", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          student_id: studentId,
-          title: hwTitle,
-          instruction: hwInstruction,
-          deadline: hwDeadline || null,
-        }),
+        body: JSON.stringify(payload),
       });
+      console.log("[homework] response", res.status);
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));

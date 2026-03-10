@@ -1,38 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type HomeworkItem = {
   id: number;
   title: string;
   instruction: string;
-  deadline: "Yesterday" | "Today" | "Tomorrow";
+  deadline?: string;
   status: "pending" | "done";
 };
-
-const homework: HomeworkItem[] = [
-  {
-    id: 1,
-    title: "Hanon Exercise #1",
-    instruction: "Practice slowly, left hand only",
-    deadline: "Tomorrow",
-    status: "pending",
-  },
-  {
-    id: 2,
-    title: "Für Elise — measures 1-16",
-    instruction: "Focus on smooth legato",
-    deadline: "Today",
-    status: "pending",
-  },
-  {
-    id: 3,
-    title: "C Major Scale",
-    instruction: "Both hands, 3 octaves",
-    deadline: "Yesterday",
-    status: "done",
-  },
-];
 
 const deadlineColor = (deadline: HomeworkItem["deadline"]) => {
   if (deadline === "Yesterday") return "text-[#FF4B4B]";
@@ -61,14 +37,57 @@ const borderColor = (status: HomeworkItem["status"]) => {
 };
 
 export function HomeworkCard() {
-  const [items, setItems] = useState(homework);
+  const [items, setItems] = useState<HomeworkItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const markDone = (id: number) => {
-    setItems((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, status: "done" } : item
-      )
-    );
+  useEffect(() => {
+    const fetchHomework = async () => {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const res = await fetch(
+          "http://localhost:8000/communication/homework/student/1",
+          { credentials: "include" }
+        );
+        if (!res.ok) {
+          throw new Error(`Failed to load homework (${res.status})`);
+        }
+        const data = await res.json();
+        setItems(data);
+      } catch (err: any) {
+        setError(err?.message || "Failed to load homework");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchHomework();
+  }, []);
+
+  const markDone = async (id: number) => {
+    setError(null);
+    try {
+      const res = await fetch(
+        `http://localhost:8000/communication/homework/${id}/done`,
+        {
+          method: "PATCH",
+          credentials: "include",
+        }
+      );
+      if (!res.ok) {
+        throw new Error(`Failed to update homework (${res.status})`);
+      }
+
+      setItems((prev) =>
+        prev.map((item) =>
+          item.id === id ? { ...item, status: "done" } : item
+        )
+      );
+    } catch (err: any) {
+      setError(err?.message || "Failed to update homework");
+    }
   };
 
   const sorted = useMemo(
@@ -79,36 +98,47 @@ export function HomeworkCard() {
   return (
     <section className="rounded-2xl bg-[#252A3D] p-6 shadow-xl">
       <h2 className="text-lg font-semibold text-white">📚 Homework from Teacher</h2>
-      <div className="mt-4 space-y-4">
-        {sorted.map((item) => (
-          <div
-            key={item.id}
-            className={`rounded-xl border-l-4 ${borderColor(item.status)} bg-[#1E2235] p-4`}
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-sm font-semibold text-white">{item.title}</div>
-                <div className="mt-1 text-sm text-[#B0B7D6]">{item.instruction}</div>
-              </div>
-              <div className="flex flex-col items-end gap-2">
-                <div className={"text-xs font-semibold " + deadlineColor(item.deadline)}>
-                  ⏰ {item.deadline}
+
+      {loading ? (
+        <div className="mt-4 text-sm text-[#B0B7D6]">Loading homework…</div>
+      ) : error ? (
+        <div className="mt-4 rounded-xl bg-[#661010] px-4 py-3 text-sm text-[#FECACA]">
+          {error}
+        </div>
+      ) : items.length === 0 ? (
+        <div className="mt-4 text-sm text-[#B0B7D6]">No homework yet! 🎉</div>
+      ) : (
+        <div className="mt-4 space-y-4">
+          {sorted.map((item) => (
+            <div
+              key={item.id}
+              className={`rounded-xl border-l-4 ${borderColor(item.status)} bg-[#1E2235] p-4`}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-sm font-semibold text-white">{item.title}</div>
+                  <div className="mt-1 text-sm text-[#B0B7D6]">{item.instruction}</div>
                 </div>
-                {statusBadge(item.status)}
+                <div className="flex flex-col items-end gap-2">
+                  <div className={"text-xs font-semibold " + deadlineColor(item.deadline)}>
+                    ⏰ {item.deadline ? new Date(item.deadline).toLocaleDateString() : "—"}
+                  </div>
+                  {statusBadge(item.status)}
+                </div>
+              </div>
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={() => markDone(item.id)}
+                  disabled={item.status === "done"}
+                  className="rounded-full bg-[#58CC02] px-4 py-2 text-sm font-semibold text-[#1C1F2E] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Mark as Done
+                </button>
               </div>
             </div>
-            <div className="mt-4 flex justify-end">
-              <button
-                onClick={() => markDone(item.id)}
-                disabled={item.status === "done"}
-                className="rounded-full bg-[#58CC02] px-4 py-2 text-sm font-semibold text-[#1C1F2E] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Mark as Done
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

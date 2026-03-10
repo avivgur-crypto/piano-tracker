@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Piano Tracker Studio Dashboard",
+  title: "Piano Tracker — Teacher Portal",
   description: "Teacher dashboard for viewing practice sessions.",
 };
 
