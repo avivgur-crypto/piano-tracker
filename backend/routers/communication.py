@@ -42,12 +42,17 @@ async def create_homework(
 ):
     ensure_teacher(current_user)
 
+    if payload.deadline:
+        deadline = payload.deadline.replace(tzinfo=None)
+    else:
+        deadline = None
+
     db_homework = Homework(
         teacher_id=current_user.id,
         student_id=payload.student_id,
         title=payload.title,
         instruction=payload.instruction,
-        deadline=payload.deadline,
+        deadline=deadline,
     )
     db.add(db_homework)
     await db.commit()
