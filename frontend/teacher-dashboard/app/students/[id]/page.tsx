@@ -1,5 +1,6 @@
 import { ActivityFeed } from "../../../components/ActivityFeed";
 import { AITeachingAssistant } from "../../../components/AITeachingAssistant";
+import { CommunicationHub } from "../../../components/CommunicationHub";
 import { ConsistencyChart } from "../../../components/ConsistencyChart";
 import { MistakeHeatmap } from "../../../components/MistakeHeatmap";
 import { StudentHeader } from "../../../components/StudentHeader";
@@ -24,6 +25,7 @@ export default function StudentPage({ params }: Props) {
       <div className="mx-auto max-w-7xl space-y-6">
         <StudentHeader name={name} />
         <AITeachingAssistant />
+        <CommunicationHub />
         <ConsistencyChart />
         <div className="grid gap-6 lg:grid-cols-2">
           <MistakeHeatmap />

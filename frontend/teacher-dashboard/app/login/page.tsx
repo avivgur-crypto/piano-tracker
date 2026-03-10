@@ -8,11 +8,12 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const onSubmit = async (event: FormEvent) => {
-    event.preventDefault();
+  const onSubmit = async (event?: FormEvent) => {
+    if (event) event.preventDefault();
     setError(null);
     setLoading(true);
 
@@ -21,24 +22,36 @@ export default function LoginPage() {
       formData.append("username", email);
       formData.append("password", password);
 
+      console.log("[login] submitting", { email, password });
+
       const res = await fetch("http://localhost:8000/auth/login", {
         method: "POST",
         body: formData,
       });
+
+      console.log("[login] response", res.status);
 
       if (!res.ok) {
         throw new Error("Invalid email or password");
       }
 
       const data = await res.json();
-      saveAuth(data.access_token, data.user);
+      console.log("[login] success", data);
 
-      if (data.user.role === "teacher") {
-        router.push("/");
-      } else {
-        router.push("/student");
-      }
+      saveAuth(data.access_token, data.user, rememberMe);
+
+      const expires = rememberMe
+        ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toUTCString()
+        : "";
+      document.cookie = `piano_tracker_token=${data.access_token}; path=/; expires=${expires}`;
+
+      const params = new URLSearchParams(window.location.search);
+      const from = params.get("from") || "/";
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      window.location.href = from;
     } catch (err) {
+      console.log("[login] error", err);
       setError("Invalid email or password");
     } finally {
       setLoading(false);
@@ -53,7 +66,7 @@ export default function LoginPage() {
           <div className="mt-2 text-sm text-[var(--text-muted)]">Welcome back</div>
         </div>
 
-        <form className="space-y-4" onSubmit={onSubmit}>
+        <form className="space-y-4">
           <div>
             <label className="mb-2 block text-sm font-semibold text-[var(--text-muted)]">
               Email
@@ -80,6 +93,19 @@ export default function LoginPage() {
             />
           </div>
 
+          <div className="flex items-center gap-2">
+            <input
+              id="remember"
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              className="h-4 w-4 rounded border-gray-600 bg-[#0F1117] text-purple-500 focus:ring-purple-500"
+            />
+            <label htmlFor="remember" className="text-sm text-[var(--text-muted)]">
+              Remember me
+            </label>
+          </div>
+
           {error ? (
             <div className="rounded-md bg-[#661010] px-4 py-2 text-sm text-[#FECACA]">
               {error}
@@ -87,8 +113,9 @@ export default function LoginPage() {
           ) : null}
 
           <button
-            type="submit"
+            type="button"
             disabled={loading}
+            onClick={(e) => onSubmit(e)}
             className="w-full rounded-xl bg-[#6C63FF] px-4 py-3 text-sm font-semibold text-[var(--bg-primary)] transition hover:bg-[#574cff] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? "Signing in..." : "Sign In"}
