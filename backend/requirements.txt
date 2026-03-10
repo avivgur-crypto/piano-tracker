@@ -8,4 +8,4 @@ alembic
 python-jose[cryptography]
 passlib[bcrypt]
 python-multipart
-google-genai
+openai

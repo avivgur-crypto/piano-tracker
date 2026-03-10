@@ -4,10 +4,11 @@ import { useRef, useState } from "react";
 import { getToken } from "../lib/auth";
 
 interface Props {
-  studentId: string;
+  studentId: number;
 }
 
 export function UploadSheetMusic({ studentId }: Props) {
+  console.log("[upload] studentId prop:", studentId);
   const [title, setTitle] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -30,27 +31,35 @@ export function UploadSheetMusic({ studentId }: Props) {
       setError("Please select a PDF file.");
       return;
     }
-    if (!title.trim()) {
-      setError("Please enter a piece title.");
-      return;
-    }
 
     setLoading(true);
     try {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("student_id", studentId);
-      formData.append("title", title);
+      formData.append("title", title.trim() || "");
+      formData.append("student_id", String(studentId));
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120_000);
 
       const res = await fetch("http://localhost:8000/ai/upload-piece", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data?.detail || `Upload failed (${res.status})`);
+        const detail = data?.detail;
+        let errMsg = `Upload failed (${res.status})`;
+        if (typeof detail === "string") errMsg = detail;
+        else if (Array.isArray(detail) && detail.length > 0) {
+          const parts = detail.map((e: { msg?: string; loc?: unknown }) => e?.msg || String(e));
+          errMsg = parts.join(". ");
+        } else if (detail && typeof detail === "object") errMsg = JSON.stringify(detail);
+        throw new Error(errMsg);
       }
 
       const data = await res.json();
@@ -60,8 +69,20 @@ export function UploadSheetMusic({ studentId }: Props) {
       setFile(null);
       if (fileRef.current) fileRef.current.value = "";
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Upload failed";
-      setError(msg);
+      const msg =
+        err instanceof Error
+          ? err.message
+          : typeof err === "object" && err !== null
+            ? JSON.stringify(err)
+            : String(err);
+      const isAbort = err instanceof Error && err.name === "AbortError";
+      const friendly =
+        msg === "Failed to fetch"
+          ? "Cannot reach server (backend may be down or CORS). Check http://localhost:8000"
+          : isAbort
+            ? "Request timed out (120s). Try a smaller PDF or check the backend."
+            : msg;
+      setError(friendly);
     } finally {
       setLoading(false);
     }

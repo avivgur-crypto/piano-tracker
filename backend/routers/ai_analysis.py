@@ -1,8 +1,10 @@
+import asyncio
+import base64
 import json
 import os
 from typing import List
 
-from google import genai
+from openai import OpenAI
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -14,8 +16,7 @@ from schemas import AIReportOut, AnalyzeSessionRequest, PieceOut
 
 router = APIRouter()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-client = genai.Client(api_key=GEMINI_API_KEY)
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 
 def ensure_teacher(user: User):
@@ -29,13 +30,21 @@ def ensure_teacher(user: User):
 
 @router.post("/upload-piece", response_model=PieceOut)
 async def upload_piece(
-    student_id: int = Form(...),
-    title: str = Form(...),
     file: UploadFile = File(...),
+    title: str = Form(""),
+    student_id: str = Form(...),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     ensure_teacher(current_user)
+
+    try:
+        student_id_int = int(student_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="student_id must be a valid integer",
+        )
 
     if file.content_type != "application/pdf":
         raise HTTPException(
@@ -57,15 +66,34 @@ async def upload_piece(
         "Return ONLY valid JSON, no markdown fences."
     )
 
-    response = client.models.generate_content(
-        model="gemini-1.5-flash",
-        contents=[
-            prompt,
-            {"mime_type": "application/pdf", "data": pdf_bytes},
-        ],
-    )
+    pdf_base64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+    try:
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:application/pdf;base64,{pdf_base64}"
+                            },
+                        },
+                    ],
+                }
+            ],
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"AI analysis failed: {str(e)}",
+        )
 
-    raw_text = response.text.strip()
+    raw_text = (response.choices[0].message.content or "").strip()
+
     if raw_text.startswith("```"):
         raw_text = raw_text.split("\n", 1)[1]
         if raw_text.endswith("```"):
@@ -78,8 +106,8 @@ async def upload_piece(
 
     piece = Piece(
         teacher_id=current_user.id,
-        student_id=student_id,
-        title=title,
+        student_id=student_id_int,
+        title=title or "Untitled",
         analysis_json=analysis,
     )
     db.add(piece)
@@ -146,11 +174,18 @@ async def analyze_session(
         "Return ONLY valid JSON, no markdown fences."
     )
 
-    response = client.models.generate_content(
-        model="gemini-1.5-flash",
-        contents=prompt,
-    )
-    raw_text = response.text.strip()
+    try:
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"AI analysis failed: {str(e)}",
+        )
+    raw_text = (response.choices[0].message.content or "").strip()
     if raw_text.startswith("```"):
         raw_text = raw_text.split("\n", 1)[1]
         if raw_text.endswith("```"):

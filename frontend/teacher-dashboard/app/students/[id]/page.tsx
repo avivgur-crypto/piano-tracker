@@ -8,10 +8,12 @@ import { UploadSheetMusic } from "../../../components/UploadSheetMusic";
 import { VelocityChart } from "../../../components/VelocityChart";
 
 interface Props {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
-export default function StudentPage({ params }: Props) {
+export default async function StudentPage({ params }: Props) {
+  const { id } = await params;
+
   const nameMap: Record<string, string> = {
     "1": "Danny Cohen",
     "2": "Sarah Levi",
@@ -19,14 +21,14 @@ export default function StudentPage({ params }: Props) {
     "4": "Maya Shapiro",
   };
 
-  const name = nameMap[params.id] ?? "Student";
+  const name = nameMap[id] ?? "Student";
 
   return (
     <main className="min-h-full px-8 pt-24">
       <div className="mx-auto max-w-7xl space-y-6">
         <StudentHeader name={name} />
         <AITeachingAssistant />
-        <UploadSheetMusic studentId={params.id} />
+        <UploadSheetMusic studentId={Number(id)} />
         <CommunicationHub />
         <ConsistencyChart />
         <div className="grid gap-6 lg:grid-cols-2">
