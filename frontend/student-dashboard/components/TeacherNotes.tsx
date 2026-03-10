@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getStudentId, getStudentToken } from "../lib/auth";
 
 type TeacherNote = {
   id: number;
@@ -22,8 +23,12 @@ export function TeacherNotes() {
 
       try {
         const res = await fetch(
-          "http://localhost:8000/communication/notes/student/1",
-          { credentials: "include" }
+          `http://localhost:8000/communication/notes/student/${getStudentId()}`,
+          {
+            headers: {
+              Authorization: `Bearer ${getStudentToken()}`,
+            },
+          }
         );
         if (!res.ok) {
           throw new Error(`Failed to load notes (${res.status})`);

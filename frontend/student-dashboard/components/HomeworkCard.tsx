@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { getStudentId, getStudentToken } from "../lib/auth";
 
 type HomeworkItem = {
   id: number;
@@ -48,8 +49,12 @@ export function HomeworkCard() {
 
       try {
         const res = await fetch(
-          "http://localhost:8000/communication/homework/student/1",
-          { credentials: "include" }
+          `http://localhost:8000/communication/homework/student/${getStudentId()}`,
+          {
+            headers: {
+              Authorization: `Bearer ${getStudentToken()}`,
+            },
+          }
         );
         if (!res.ok) {
           throw new Error(`Failed to load homework (${res.status})`);
@@ -73,7 +78,9 @@ export function HomeworkCard() {
         `http://localhost:8000/communication/homework/${id}/done`,
         {
           method: "PATCH",
-          credentials: "include",
+          headers: {
+            Authorization: `Bearer ${getStudentToken()}`,
+          },
         }
       );
       if (!res.ok) {
