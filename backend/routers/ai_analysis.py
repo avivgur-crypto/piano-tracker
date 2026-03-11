@@ -109,7 +109,7 @@ def _parse_musicxml_to_score_structure(
         if measure_num is not None:
             measure_count = max(measure_count, measure_num)
         offset = float(n.offset) if n.offset is not None else 0.0
-        if getattr(n, "isChord", lambda: False)():
+        if hasattr(n, "isChord") and n.isChord:
             for p in n.pitches:
                 pitch_name = p.name
                 octave = int(p.octave)
