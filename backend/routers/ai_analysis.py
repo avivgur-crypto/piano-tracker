@@ -1,8 +1,13 @@
 import asyncio
-import base64
+import io
 import json
+import logging
 import os
-from typing import List
+import tempfile
+import zipfile
+from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 from openai import OpenAI
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -12,11 +17,167 @@ from sqlalchemy.future import select
 from auth import get_current_user
 from database import get_db
 from models import AIReport, Piece, Session, User
-from schemas import AIReportOut, AnalyzeSessionRequest, PieceOut
+from schemas import AIReportOut, AnalyzeSessionRequest, PieceOut, PieceUploadSummary
 
 router = APIRouter()
 
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
+
+def _parse_musicxml_to_score_structure(
+    file_bytes: bytes, filename: str
+) -> Tuple[str, Dict[str, Any], PieceUploadSummary]:
+    """
+    Parse MusicXML (.xml or .mxl) with music21.
+    Returns (raw_xml_string, score_dict, summary).
+    """
+    from music21 import converter, stream
+
+    # Get raw XML string (for .mxl extract root .xml from zip)
+    raw_xml: str
+    if filename.lower().endswith(".mxl"):
+        with zipfile.ZipFile(io.BytesIO(file_bytes), "r") as z:
+            # Find root file (often root.xml or the first .xml)
+            xml_names = [n for n in z.namelist() if n.lower().endswith(".xml")]
+            if not xml_names:
+                raise ValueError("No XML file found in .mxl archive")
+            root_name = xml_names[0]
+            raw_xml = z.read(root_name).decode("utf-8", errors="replace")
+        # Write to temp file for music21 (converter.parse often needs path for .mxl)
+        with tempfile.NamedTemporaryFile(suffix=".mxl", delete=False) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+        try:
+            score = converter.parse(tmp_path)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+    else:
+        raw_xml = file_bytes.decode("utf-8", errors="replace")
+        with tempfile.NamedTemporaryFile(
+            mode="wb", suffix=".xml", delete=False
+        ) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+        try:
+            score = converter.parse(tmp_path)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    notes_list: List[Dict[str, Any]] = []
+    dynamics_list: List[Dict[str, Any]] = []
+    time_sig: Optional[str] = None
+    key_sig: Optional[str] = None
+    tempo_val: Optional[str] = None
+    measure_count = 0
+
+    # Time signature
+    try:
+        for ts in score.recurse().getElementsByClass(stream.TimeSignature):
+            time_sig = str(ts.ratioString) if getattr(ts, "ratioString", None) else None
+            break
+    except Exception:
+        pass
+    # Key signature (music21.key.KeySignature)
+    try:
+        from music21 import key
+        for ks in score.recurse().getElementsByClass(key.KeySignature):
+            key_sig = getattr(ks, "name", None) or str(ks)
+            break
+    except Exception:
+        pass
+    # Tempo
+    try:
+        from music21 import tempo
+        for mm in score.recurse().getElementsByClass(tempo.MetronomeMark):
+            if getattr(mm, "number", None) and getattr(mm, "referent", None):
+                tempo_val = f"{mm.number} {mm.referent.name}"
+                break
+    except Exception:
+        pass
+
+    # Notes with measure number and beat (expand chords to individual pitches)
+    for n in score.flat.notes:
+        duration = float(n.duration.quarterLength) if n.duration else 0.25
+        measure_num = getattr(n, "measureNumber", None)
+        if measure_num is not None:
+            measure_count = max(measure_count, measure_num)
+        offset = float(n.offset) if n.offset is not None else 0.0
+        if getattr(n, "isChord", lambda: False)():
+            for p in n.pitches:
+                pitch_name = p.name
+                octave = int(p.octave)
+                name_with_octave = f"{pitch_name}{octave}"
+                notes_list.append({
+                    "pitch": pitch_name,
+                    "octave": octave,
+                    "nameWithOctave": name_with_octave,
+                    "duration": duration,
+                    "measure": measure_num,
+                    "beat": offset,
+                })
+        elif hasattr(n, "pitch") and n.pitch is not None:
+            pitch_name = n.pitch.name
+            octave = int(n.pitch.octave)
+            name_with_octave = f"{pitch_name}{octave}"
+            notes_list.append({
+                "pitch": pitch_name,
+                "octave": octave,
+                "nameWithOctave": name_with_octave,
+                "duration": duration,
+                "measure": measure_num,
+                "beat": offset,
+            })
+        # Dynamics (expressions on notes or in stream)
+        if hasattr(n, "expressions") and n.expressions:
+            for ex in n.expressions:
+                ex_str = str(ex).strip()
+                if ex_str and any(
+                    m in ex_str.lower()
+                    for m in ("p", "f", "m", "pp", "ff", "mp", "mf", "cresc", "dim")
+                ):
+                    dynamics_list.append({
+                        "measure": getattr(n, "measureNumber", None),
+                        "marking": ex_str,
+                    })
+
+    # If no measures from notes, count unique measures
+    if measure_count == 0 and notes_list:
+        measure_count = max(
+            (x["measure"] for x in notes_list if x.get("measure") is not None),
+            default=1,
+        )
+
+    score_dict: Dict[str, Any] = {
+        "notes": notes_list,
+        "time_signature": time_sig,
+        "key_signature": key_sig,
+        "tempo": tempo_val,
+        "dynamics": dynamics_list,
+    }
+    summary = PieceUploadSummary(
+        key_signature=key_sig,
+        time_signature=time_sig,
+        measure_count=measure_count,
+        total_notes=len(notes_list),
+    )
+    return raw_xml, score_dict, summary
+
+
+def _safe_ai_error(e: Exception) -> str:
+    """Return a user-safe message; never expose API keys or full error body."""
+    msg = str(e).lower()
+    if "invalid_api_key" in msg or "401" in msg or "incorrect api key" in msg or "authentication" in msg:
+        return "Invalid or missing OpenAI API key. Set OPENAI_API_KEY in backend/.env (get one at https://platform.openai.com/account/api-keys)."
+    if "rate" in msg or "429" in msg:
+        return "OpenAI rate limit exceeded. Try again later."
+    return "AI request failed. Check backend logs for details."
 
 
 def ensure_teacher(user: User):
@@ -27,6 +188,13 @@ def ensure_teacher(user: User):
 
 
 # ── POST /ai/upload-piece ────────────────────────────────────────────────────
+
+def _allowed_musicxml_filename(filename: str) -> bool:
+    if not filename:
+        return False
+    lower = filename.lower()
+    return lower.endswith(".xml") or lower.endswith(".musicxml") or lower.endswith(".mxl")
+
 
 @router.post("/upload-piece", response_model=PieceOut)
 async def upload_piece(
@@ -46,69 +214,44 @@ async def upload_piece(
             detail="student_id must be a valid integer",
         )
 
-    if file.content_type != "application/pdf":
+    if not _allowed_musicxml_filename(file.filename or ""):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only PDF files are supported",
+            detail="Only MusicXML files (.xml, .musicxml, .mxl) are supported.",
         )
 
-    pdf_bytes = await file.read()
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file is empty.",
+        )
 
-    prompt = (
-        "You are a music theory expert. Analyze this sheet music PDF and extract "
-        "the following in JSON format:\n"
-        "{\n"
-        '  "measures": [{"number": 1, "notes": ["C4", "E4", "G4"]}],\n'
-        '  "time_signature": "4/4",\n'
-        '  "key_signature": "C major",\n'
-        '  "dynamics": [{"measure": 1, "marking": "mf"}]\n'
-        "}\n"
-        "Return ONLY valid JSON, no markdown fences."
-    )
-
-    pdf_base64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
     try:
-        response = await asyncio.to_thread(
-            client.chat.completions.create,
-            model="gpt-4o",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:application/pdf;base64,{pdf_base64}"
-                            },
-                        },
-                    ],
-                }
-            ],
+        raw_xml, score_dict, summary = await asyncio.to_thread(
+            _parse_musicxml_to_score_structure,
+            file_bytes,
+            file.filename or "score.xml",
         )
     except Exception as e:
+        logger.exception("MusicXML parse error: %s", e)
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"AI analysis failed: {str(e)}",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not parse MusicXML. Ensure the file is valid .xml or .mxl.",
+        ) from e
+
+    if not score_dict.get("notes"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No notes found in the score.",
         )
-
-    raw_text = (response.choices[0].message.content or "").strip()
-
-    if raw_text.startswith("```"):
-        raw_text = raw_text.split("\n", 1)[1]
-        if raw_text.endswith("```"):
-            raw_text = raw_text[: -3].strip()
-
-    try:
-        analysis = json.loads(raw_text)
-    except json.JSONDecodeError:
-        analysis = {"raw_response": raw_text}
 
     piece = Piece(
         teacher_id=current_user.id,
         student_id=student_id_int,
         title=title or "Untitled",
-        analysis_json=analysis,
+        musicxml_data=raw_xml,
+        score_json=json.dumps(score_dict),
     )
     db.add(piece)
     await db.commit()
@@ -119,7 +262,10 @@ async def upload_piece(
         teacher_id=piece.teacher_id,
         student_id=piece.student_id,
         title=piece.title,
+        musicxml_data=piece.musicxml_data,
+        score_json=piece.score_json,
         analysis_json=piece.analysis_json,
+        score_summary=summary,
         created_at=piece.created_at,
     )
 
@@ -148,62 +294,75 @@ async def analyze_session(
     )
     piece = result.scalar_one_or_none()
 
-    piece_context = ""
-    if piece and piece.analysis_json:
-        piece_context = (
-            f"The student is working on '{piece.title}'.\n"
-            f"Sheet music analysis: {json.dumps(piece.analysis_json)}\n\n"
+    score_json: Optional[Dict[str, Any]] = None
+    if piece and piece.score_json:
+        try:
+            score_json = json.loads(piece.score_json)
+        except json.JSONDecodeError:
+            score_json = None
+    if not score_json and piece and piece.analysis_json:
+        score_json = piece.analysis_json if isinstance(piece.analysis_json, dict) else None
+
+    if not piece or not score_json:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No score found for this student. Upload a MusicXML piece first.",
         )
 
-    midi_events = json.dumps(session.events or [])
+    from services.midi_analyzer import compare_midi_to_score
 
-    prompt = (
-        "You are an expert piano teacher AI assistant.\n\n"
-        f"{piece_context}"
-        f"Here is the MIDI data from the student's practice session:\n{midi_events}\n\n"
-        "Compare the student's performance to the sheet music and produce TWO reports "
-        "in the following JSON format:\n"
-        "{\n"
-        '  "teacher_report": "Detailed technical analysis for the teacher...",\n'
-        '  "student_report": "Friendly, encouraging feedback for the student..."\n'
-        "}\n\n"
-        "The teacher_report should cover: wrong notes (which measures), rhythm errors, "
-        "missing dynamics, and technical suggestions.\n"
-        "The student_report should be encouraging and use simple language, highlight "
-        "what went well, and gently suggest improvements.\n"
-        "Return ONLY valid JSON, no markdown fences."
+    midi_events = session.events or []
+    if not isinstance(midi_events, list):
+        midi_events = list(midi_events) if midi_events else []
+    errors = compare_midi_to_score(midi_events, score_json)
+    errors_str = json.dumps(errors, indent=2)
+
+    if not client:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="OPENAI_API_KEY is not set. Add it to backend/.env",
+        )
+
+    teacher_prompt = (
+        "You are an expert piano teacher. Here are the errors from the student's practice session:\n"
+        f"{errors_str}\n\n"
+        "Generate a technical, detailed report for the teacher with specific measures and recommendations. "
+        "Use clear, professional language."
+    )
+    student_prompt = (
+        "You are a friendly piano coach. Here are some areas to improve from the student's practice:\n"
+        f"{errors_str}\n\n"
+        "Generate an encouraging, friendly report for the student with specific tips. Use simple language. "
+        "Highlight what went well and gently suggest improvements."
     )
 
-    try:
-        response = await asyncio.to_thread(
-            client.chat.completions.create,
+    def _call_gpt(prompt: str) -> str:
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": prompt}],
         )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"AI analysis failed: {str(e)}",
-        )
-    raw_text = (response.choices[0].message.content or "").strip()
-    if raw_text.startswith("```"):
-        raw_text = raw_text.split("\n", 1)[1]
-        if raw_text.endswith("```"):
-            raw_text = raw_text[: -3].strip()
+        raw = (response.choices[0].message.content or "").strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1]
+            if raw.endswith("```"):
+                raw = raw[: -3].strip()
+        return raw
 
     try:
-        reports = json.loads(raw_text)
-    except json.JSONDecodeError:
-        reports = {
-            "teacher_report": raw_text,
-            "student_report": raw_text,
-        }
+        teacher_report = await asyncio.to_thread(_call_gpt, teacher_prompt)
+        student_report = await asyncio.to_thread(_call_gpt, student_prompt)
+    except Exception as e:
+        logger.exception("OpenAI analyze_session error: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"AI analysis failed: {_safe_ai_error(e)}",
+        )
 
     ai_report = AIReport(
         session_id=payload.session_id,
         student_id=payload.student_id,
-        teacher_report=reports.get("teacher_report", ""),
-        student_report=reports.get("student_report", ""),
+        teacher_report=teacher_report,
+        student_report=student_report,
     )
     db.add(ai_report)
     await db.commit()
@@ -274,13 +433,31 @@ async def get_student_pieces(
     )
     pieces = result.scalars().all()
 
+    def _summary_from_score_json(score_json_str: str | None) -> PieceUploadSummary | None:
+        if not score_json_str:
+            return None
+        try:
+            data = json.loads(score_json_str)
+            notes = data.get("notes") or []
+            return PieceUploadSummary(
+                key_signature=data.get("key_signature"),
+                time_signature=data.get("time_signature"),
+                measure_count=max((n.get("measure") or 0 for n in notes), default=0),
+                total_notes=len(notes),
+            )
+        except Exception:
+            return None
+
     return [
         PieceOut(
             id=p.id,
             teacher_id=p.teacher_id,
             student_id=p.student_id,
             title=p.title,
+            musicxml_data=p.musicxml_data,
+            score_json=p.score_json,
             analysis_json=p.analysis_json,
+            score_summary=_summary_from_score_json(p.score_json),
             created_at=p.created_at,
         )
         for p in pieces

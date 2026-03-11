@@ -24,11 +24,11 @@ function parseReport(text: string) {
 
   for (const line of lines) {
     const lower = line.toLowerCase();
-    if (lower.includes("wrong note") || lower.includes("note accuracy") || lower.includes("notes")) {
+    if (lower.includes("wrong note") || lower.includes("note accuracy") || lower.includes("played") && lower.includes("expected")) {
       current = "wrongNotes";
-    } else if (lower.includes("rhythm") || lower.includes("timing")) {
+    } else if (lower.includes("rhythm") || lower.includes("timing") || lower.includes("rushed") || lower.includes("tempo")) {
       current = "rhythm";
-    } else if (lower.includes("dynamic") || lower.includes("volume") || lower.includes("expression")) {
+    } else if (lower.includes("dynamic") || lower.includes("volume") || lower.includes("expression") || lower.includes("forte") || lower.includes("piano")) {
       current = "dynamics";
     }
     sections[current] += line + "\n";

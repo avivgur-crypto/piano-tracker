@@ -58,7 +58,9 @@ class Piece(Base):
     teacher_id = Column(Integer, ForeignKey("users.id"))
     student_id = Column(Integer, ForeignKey("users.id"))
     title = Column(String, nullable=False)
-    analysis_json = Column(JSON)
+    musicxml_data = Column(Text)
+    score_json = Column(Text)
+    analysis_json = Column(JSON)  # deprecated; kept for backward compatibility
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

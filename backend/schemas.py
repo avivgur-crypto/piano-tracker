@@ -91,12 +91,22 @@ class TeacherNoteOut(BaseModel):
 
 # --- AI Analysis schemas ---
 
+class PieceUploadSummary(BaseModel):
+    key_signature: Optional[str] = None
+    time_signature: Optional[str] = None
+    measure_count: int = 0
+    total_notes: int = 0
+
+
 class PieceOut(BaseModel):
     id: int
     teacher_id: int
     student_id: int
     title: str
+    musicxml_data: Optional[str] = None
+    score_json: Optional[str] = None
     analysis_json: Optional[dict] = None
+    score_summary: Optional[PieceUploadSummary] = None
     created_at: datetime
 
 

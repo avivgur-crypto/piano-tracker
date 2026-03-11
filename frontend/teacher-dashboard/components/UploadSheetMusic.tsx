@@ -14,13 +14,18 @@ export function UploadSheetMusic({ studentId }: Props) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [analysis, setAnalysis] = useState<Record<string, unknown> | null>(null);
+  const [scoreSummary, setScoreSummary] = useState<{
+    key_signature?: string;
+    time_signature?: string;
+    measure_count: number;
+    total_notes: number;
+  } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = async () => {
     setMessage(null);
     setError(null);
-    setAnalysis(null);
+    setScoreSummary(null);
 
     const token = getToken();
     if (!token) {
@@ -28,7 +33,7 @@ export function UploadSheetMusic({ studentId }: Props) {
       return;
     }
     if (!file) {
-      setError("Please select a PDF file.");
+      setError("Please select an .xml or .mxl file.");
       return;
     }
 
@@ -63,8 +68,8 @@ export function UploadSheetMusic({ studentId }: Props) {
       }
 
       const data = await res.json();
-      setMessage(`Sheet music "${data.title}" analyzed successfully!`);
-      setAnalysis(data.analysis_json);
+      setMessage(`Sheet music "${data.title}" uploaded successfully!`);
+      setScoreSummary(data.score_summary ?? null);
       setTitle("");
       setFile(null);
       if (fileRef.current) fileRef.current.value = "";
@@ -80,7 +85,7 @@ export function UploadSheetMusic({ studentId }: Props) {
         msg === "Failed to fetch"
           ? "Cannot reach server (backend may be down or CORS). Check http://localhost:8000"
           : isAbort
-            ? "Request timed out (120s). Try a smaller PDF or check the backend."
+            ? "Request timed out (120s). Try a smaller file or check the backend."
             : msg;
       setError(friendly);
     } finally {
@@ -92,7 +97,7 @@ export function UploadSheetMusic({ studentId }: Props) {
     <section className="rounded-2xl bg-[#1A1D27] p-6 shadow-xl">
       <h2 className="text-lg font-semibold text-white">🎼 Upload Sheet Music</h2>
       <p className="mt-1 text-sm text-[#B0B7D6]">
-        Upload a PDF of sheet music to analyze with AI
+        Upload MusicXML sheet music (.xml or .mxl)
       </p>
 
       <div className="mt-4 space-y-4">
@@ -108,11 +113,11 @@ export function UploadSheetMusic({ studentId }: Props) {
         </label>
 
         <label className="space-y-1 text-sm text-white">
-          Sheet Music (PDF)
+          Sheet Music (MusicXML)
           <input
             ref={fileRef}
             type="file"
-            accept="application/pdf"
+            accept=".xml,.mxl,application/vnd.recordare.musicxml+xml,application/octet-stream"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             className="w-full rounded-xl border border-white/10 bg-[#111827] px-3 py-2 text-sm text-white file:mr-3 file:rounded-lg file:border-0 file:bg-purple-600 file:px-3 file:py-1 file:text-sm file:font-semibold file:text-white hover:file:bg-purple-500"
           />
@@ -129,14 +134,21 @@ export function UploadSheetMusic({ studentId }: Props) {
           </div>
         )}
 
-        {analysis && (
+        {scoreSummary && (
           <div className="rounded-xl border border-purple-500/30 bg-[#111827] p-4">
             <h3 className="mb-2 text-sm font-semibold text-purple-300">
-              AI Analysis Result
+              Parsed score summary
             </h3>
-            <pre className="max-h-48 overflow-auto text-xs text-[#B0B7D6]">
-              {JSON.stringify(analysis, null, 2)}
-            </pre>
+            <ul className="space-y-1 text-sm text-[#B0B7D6]">
+              {scoreSummary.key_signature != null && (
+                <li>Key: {scoreSummary.key_signature}</li>
+              )}
+              {scoreSummary.time_signature != null && (
+                <li>Time: {scoreSummary.time_signature}</li>
+              )}
+              <li>Measures: {scoreSummary.measure_count}</li>
+              <li>Total notes: {scoreSummary.total_notes}</li>
+            </ul>
           </div>
         )}
 
@@ -146,7 +158,7 @@ export function UploadSheetMusic({ studentId }: Props) {
           onClick={handleSubmit}
           className="inline-flex items-center justify-center rounded-xl bg-purple-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {loading ? "Analyzing..." : "Upload & Analyze 🎼"}
+          {loading ? "Uploading..." : "Upload MusicXML 🎼"}
         </button>
       </div>
     </section>
