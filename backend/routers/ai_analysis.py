@@ -296,7 +296,7 @@ async def analyze_session(
         .where(Piece.student_id == payload.student_id)
         .order_by(Piece.created_at.desc())
     )
-    piece = result.scalar_one_or_none()
+    piece = result.scalars().first()
 
     score_json: Optional[Dict[str, Any]] = None
     if piece and piece.score_json:
