@@ -117,7 +117,7 @@ export function TeacherAIReport({ studentId }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
 
-  const [selectedPeriod, setSelectedPeriod] = useState<string>("week");
+  const [selectedPeriod, setSelectedPeriod] = useState<string | null>(null);
   const [periodData, setPeriodData] = useState<PeriodSummary | null>(null);
   const [periodLoading, setPeriodLoading] = useState(false);
   const [periodError, setPeriodError] = useState<string | null>(null);
@@ -169,8 +169,6 @@ export function TeacherAIReport({ studentId }: Props) {
     }
   }, [studentId]);
 
-  useEffect(() => { fetchPeriod("week"); }, [fetchPeriod]);
-
   const handleGenerate = async () => {
     const token = getToken();
     if (!token) { setError("No authentication token found."); return; }
@@ -190,7 +188,7 @@ export function TeacherAIReport({ studentId }: Props) {
         throw new Error(typeof d?.detail === "string" ? d.detail : `Generation failed (${res.status})`);
       }
       await fetchReports();
-      await fetchPeriod(selectedPeriod);
+      if (selectedPeriod) await fetchPeriod(selectedPeriod);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate report");
     } finally {
@@ -291,7 +289,11 @@ export function TeacherAIReport({ studentId }: Props) {
                 ))}
               </div>
             </div>
-          ) : null}
+          ) : (
+            <div className="rounded-xl border border-dashed border-white/20 bg-[#111827] p-5 text-center text-sm text-zinc-400">
+              Select a period to view a summary
+            </div>
+          )}
         </div>
       </div>
 
