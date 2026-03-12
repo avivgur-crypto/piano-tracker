@@ -74,21 +74,39 @@ def pick_port(ports: list) -> str:
         print("Invalid choice. Try again.")
 
 API_URL = os.environ.get("API_URL", "http://localhost:8000")
+DEVICE_ID = os.environ.get("DEVICE_ID", "keysight-pi")
 STUDENT_ID = int(os.environ.get("STUDENT_ID", "2"))
 SILENCE_TIMEOUT = 5  # seconds of silence before session auto-ends
 
 
+def _get_active_session():
+    """Fetch the active session for this device. Returns (student_id, piece_id) or defaults."""
+    try:
+        resp = requests.get(f"{API_URL}/sessions/active/{DEVICE_ID}", timeout=5)
+        if resp.ok:
+            data = resp.json()
+            sid = data.get("student_id", STUDENT_ID)
+            pid = data.get("piece_id")
+            print(f"    [active] student_id={sid}, piece_id={pid}")
+            return sid, pid
+    except Exception as e:
+        print(f"    [active] Could not fetch active session: {e}")
+    return STUDENT_ID, None
+
+
 def _send_session(events, session_start, session_end, total_notes):
     """POST collected events to the backend API."""
+    student_id, piece_id = _get_active_session()
     duration = int((session_end - session_start).total_seconds())
     payload = {
-        "device_id": "keysight-pi",
-        "student_id": STUDENT_ID,
+        "device_id": DEVICE_ID,
+        "student_id": student_id,
         "started_at": session_start.isoformat() + "Z",
         "ended_at": session_end.isoformat() + "Z",
         "duration_seconds": duration,
         "total_notes": total_notes,
         "events": events,
+        "piece_id": piece_id,
     }
     try:
         resp = requests.post(f"{API_URL}/sessions", json=payload, timeout=10)
@@ -103,7 +121,7 @@ def _send_session(events, session_start, session_end, total_notes):
 def listen(port_name: str):
     """Open the MIDI port and print events in real-time."""
     print(f"\n🎵  Listening on '{port_name}' — press Ctrl+C to stop.")
-    print(f"    Auto-send after {SILENCE_TIMEOUT}s of silence  |  API: {API_URL}  |  student_id: {STUDENT_ID}\n")
+    print(f"    Auto-send after {SILENCE_TIMEOUT}s of silence  |  API: {API_URL}  |  device: {DEVICE_ID}  |  default student_id: {STUDENT_ID}\n")
     print(f"{'TIME':<12} {'EVENT':<12} {'NOTE':<8} {'VELOCITY':<20} {'CHANNEL'}")
     print("─" * 65)
 

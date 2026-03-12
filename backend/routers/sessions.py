@@ -2,17 +2,59 @@ import logging
 import traceback
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from database import get_db
 from models import Session as DBSession
 from schemas import SessionCreate, SessionResponse
-from typing import List
+from typing import Dict, List, Optional
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# ── In-memory active-session store (device_id → session info) ────────────────
+active_sessions: Dict[str, dict] = {}
+
+
+class ActiveSessionRequest(BaseModel):
+    device_id: str
+    student_id: int
+    piece_id: Optional[int] = None
+
+
+class ActiveSessionResponse(BaseModel):
+    device_id: str
+    student_id: int
+    piece_id: Optional[int] = None
+    started_at: str
+
+
+@router.post("/sessions/active", response_model=ActiveSessionResponse)
+async def set_active_session(payload: ActiveSessionRequest):
+    entry = {
+        "device_id": payload.device_id,
+        "student_id": payload.student_id,
+        "piece_id": payload.piece_id,
+        "started_at": datetime.utcnow().isoformat(),
+    }
+    active_sessions[payload.device_id] = entry
+    return ActiveSessionResponse(**entry)
+
+
+@router.get("/sessions/active/{device_id}", response_model=ActiveSessionResponse)
+async def get_active_session(device_id: str):
+    entry = active_sessions.get(device_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="No active session for this device")
+    return ActiveSessionResponse(**entry)
+
+
+@router.delete("/sessions/active/{device_id}", status_code=204)
+async def clear_active_session(device_id: str):
+    active_sessions.pop(device_id, None)
 
 
 def parse_dt(s: str) -> datetime:

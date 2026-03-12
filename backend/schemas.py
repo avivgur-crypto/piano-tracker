@@ -14,6 +14,7 @@ class SessionEvent(BaseModel):
 class SessionCreate(BaseModel):
     device_id: str
     student_id: Optional[int] = None
+    piece_id: Optional[int] = None
     started_at: str
     ended_at: str
     duration_seconds: int

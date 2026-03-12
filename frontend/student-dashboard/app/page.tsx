@@ -2,6 +2,7 @@ import { Achievements } from "@/components/Achievements";
 import { AIInsights } from "@/components/AIInsights";
 import { HomeworkCard } from "@/components/HomeworkCard";
 import { MyPieces } from "@/components/MyPieces";
+import { StartPracticing } from "@/components/StartPracticing";
 import { TeacherNotes } from "@/components/TeacherNotes";
 import { WeeklyPracticeGraph } from "@/components/WeeklyPracticeGraph";
 
@@ -9,6 +10,10 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-[#1C1F2E] px-6 pb-12 pt-24">
       <div className="mx-auto max-w-6xl">
+        <section className="mb-10">
+          <StartPracticing />
+        </section>
+
         <div className="mb-10 rounded-2xl bg-gradient-to-br from-[#1C1F2E] to-[#1a2a1a] p-6 shadow-lg shadow-[#58CC02]/20">
           <h1 className="text-3xl font-bold text-white">
             Welcome to your practice zone
