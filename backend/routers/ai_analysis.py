@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from auth import get_current_user
+from auth import ensure_teacher, get_current_user
 from database import get_db
 from models import AIReport, Piece, Session, User
 from schemas import AIReportOut, AnalyzeSessionRequest, PieceOut, PieceUploadSummary
@@ -180,13 +180,6 @@ def _safe_ai_error(e: Exception) -> str:
     return "AI request failed. Check backend logs for details."
 
 
-def ensure_teacher(user: User):
-    if user.role != "teacher":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Teacher-only endpoint"
-        )
-
-
 # ── POST /ai/upload-piece ────────────────────────────────────────────────────
 
 def _allowed_musicxml_filename(filename: str) -> bool:
@@ -280,12 +273,23 @@ async def analyze_session(
 ):
     ensure_teacher(current_user)
 
-    result = await db.execute(
-        select(Session).where(Session.id == payload.session_id)
-    )
+    if payload.session_id:
+        result = await db.execute(
+            select(Session).where(Session.id == payload.session_id)
+        )
+    else:
+        result = await db.execute(
+            select(Session)
+            .where(Session.student_id == payload.student_id)
+            .order_by(Session.created_at.desc())
+            .limit(1)
+        )
     session = result.scalar_one_or_none()
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(
+            status_code=404,
+            detail="No sessions found for this student",
+        )
 
     result = await db.execute(
         select(Piece)
@@ -433,7 +437,7 @@ async def get_student_pieces(
     )
     pieces = result.scalars().all()
 
-    def _summary_from_score_json(score_json_str: str | None) -> PieceUploadSummary | None:
+    def _summary_from_score_json(score_json_str: Optional[str]) -> Optional[PieceUploadSummary]:
         if not score_json_str:
             return None
         try:
@@ -462,3 +466,26 @@ async def get_student_pieces(
         )
         for p in pieces
     ]
+
+
+# ── DELETE /ai/pieces/{piece_id} ─────────────────────────────────────────────
+
+@router.delete("/pieces/{piece_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_piece(
+    piece_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    ensure_teacher(current_user)
+
+    piece = await db.get(Piece, piece_id)
+    if not piece:
+        raise HTTPException(status_code=404, detail="Piece not found")
+    if piece.teacher_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only delete your own pieces",
+        )
+
+    await db.delete(piece)
+    await db.commit()

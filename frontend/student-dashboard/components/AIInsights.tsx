@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { API_URL } from "../lib/api";
 import { getStudentId, getStudentToken } from "../lib/auth";
 
 type AIReport = {
@@ -55,7 +56,7 @@ export function AIInsights() {
 
       try {
         const res = await fetch(
-          `http://localhost:8000/ai/reports/student/${studentId}`,
+          `${API_URL}/ai/reports/student/${studentId}`,
           {
             headers: {
               Authorization: `Bearer ${getStudentToken()}`,

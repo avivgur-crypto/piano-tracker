@@ -9,6 +9,7 @@ class Session(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     device_id = Column(String, index=True)
+    student_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     started_at = Column(DateTime)
     ended_at = Column(DateTime)
     duration_seconds = Column(Integer)

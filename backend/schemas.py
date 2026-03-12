@@ -13,6 +13,7 @@ class SessionEvent(BaseModel):
 
 class SessionCreate(BaseModel):
     device_id: str
+    student_id: Optional[int] = None
     started_at: str
     ended_at: str
     duration_seconds: int
@@ -120,5 +121,5 @@ class AIReportOut(BaseModel):
 
 
 class AnalyzeSessionRequest(BaseModel):
-    session_id: int
+    session_id: Optional[int] = None
     student_id: int

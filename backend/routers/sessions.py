@@ -19,6 +19,7 @@ def parse_dt(s: str) -> datetime:
 async def create_session(session: SessionCreate, db: AsyncSession = Depends(get_db)):
     db_session = DBSession(
         device_id=session.device_id,
+        student_id=session.student_id,
         started_at=parse_dt(session.started_at),
         ended_at=parse_dt(session.ended_at),
         duration_seconds=session.duration_seconds,
@@ -31,6 +32,7 @@ async def create_session(session: SessionCreate, db: AsyncSession = Depends(get_
     return SessionResponse(
         id=db_session.id,
         device_id=db_session.device_id,
+        student_id=db_session.student_id,
         started_at=db_session.started_at.isoformat(),
         ended_at=db_session.ended_at.isoformat(),
         duration_seconds=db_session.duration_seconds,
@@ -47,6 +49,7 @@ async def list_sessions(db: AsyncSession = Depends(get_db)):
         SessionResponse(
             id=s.id,
             device_id=s.device_id,
+            student_id=s.student_id,
             started_at=s.started_at.isoformat(),
             ended_at=s.ended_at.isoformat(),
             duration_seconds=s.duration_seconds,
@@ -65,6 +68,7 @@ async def get_session(session_id: int, db: AsyncSession = Depends(get_db)):
     return SessionResponse(
         id=session.id,
         device_id=session.device_id,
+        student_id=session.student_id,
         started_at=session.started_at.isoformat(),
         ended_at=session.ended_at.isoformat(),
         duration_seconds=session.duration_seconds,

@@ -1,10 +1,10 @@
 import Link from "next/link";
 
 const students = [
-  { id: 1, name: "Danny Cohen", status: "red", lastSession: "5 days ago" },
-  { id: 2, name: "Sarah Levi", status: "yellow", lastSession: "2 days ago" },
-  { id: 3, name: "Tom Katz", status: "green", lastSession: "Today" },
-  { id: 4, name: "Maya Shapiro", status: "green", lastSession: "Yesterday" },
+  { id: 2, name: "Danny Cohen", status: "red", lastSession: "5 days ago" },
+  { id: 3, name: "Sarah Levi", status: "yellow", lastSession: "2 days ago" },
+  { id: 4, name: "Tom Katz", status: "green", lastSession: "Today" },
+  { id: 5, name: "Maya Shapiro", status: "green", lastSession: "Yesterday" },
 ];
 
 const STATUS_COLORS: Record<string, string> = {

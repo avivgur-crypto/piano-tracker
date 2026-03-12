@@ -1,18 +1,30 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { API_URL } from "../lib/api";
 import { getToken } from "../lib/auth";
 
 interface Props {
   studentId: number;
 }
 
+type PieceItem = {
+  id: number;
+  title: string;
+  student_id: number;
+  created_at: string;
+  score_summary?: {
+    key_signature?: string;
+    time_signature?: string;
+    measure_count: number;
+    total_notes: number;
+  };
+};
+
 export function UploadSheetMusic({ studentId }: Props) {
-  console.log("[upload] studentId prop:", studentId);
   const [title, setTitle] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [scoreSummary, setScoreSummary] = useState<{
     key_signature?: string;
@@ -20,10 +32,51 @@ export function UploadSheetMusic({ studentId }: Props) {
     measure_count: number;
     total_notes: number;
   } | null>(null);
+  const [pieces, setPieces] = useState<PieceItem[]>([]);
+  const [piecesLoading, setPiecesLoading] = useState(true);
+  const [piecesError, setPiecesError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const fetchPieces = useCallback(
+    async (overrideToken?: string | null) => {
+      const token = overrideToken !== undefined ? overrideToken : getToken();
+      if (!token) {
+        setPiecesLoading(false);
+        setPiecesError("Not signed in.");
+        return;
+      }
+      setPiecesLoading(true);
+      setPiecesError(null);
+      try {
+        const res = await fetch(
+          `${API_URL}/ai/pieces/student/${studentId}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!res.ok) {
+          const text = await res.text();
+          if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
+            console.warn("[UploadSheetMusic] GET pieces failed", res.status, text?.slice(0, 200));
+          }
+          throw new Error("Failed to load pieces");
+        }
+        const data: PieceItem[] = await res.json();
+        setPieces(Array.isArray(data) ? data : []);
+      } catch {
+        setPieces([]);
+        setPiecesError("Could not load pieces. Please refresh.");
+      } finally {
+        setPiecesLoading(false);
+      }
+    },
+    [studentId]
+  );
+
+  useEffect(() => {
+    fetchPieces();
+  }, [fetchPieces]);
+
   const handleSubmit = async () => {
-    setMessage(null);
     setError(null);
     setScoreSummary(null);
 
@@ -47,7 +100,7 @@ export function UploadSheetMusic({ studentId }: Props) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 120_000);
 
-      const res = await fetch("http://localhost:8000/ai/upload-piece", {
+      const res = await fetch(`${API_URL}/ai/upload-piece`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
@@ -68,11 +121,11 @@ export function UploadSheetMusic({ studentId }: Props) {
       }
 
       const data = await res.json();
-      setMessage(`Sheet music "${data.title}" uploaded successfully!`);
       setScoreSummary(data.score_summary ?? null);
       setTitle("");
       setFile(null);
       if (fileRef.current) fileRef.current.value = "";
+      await fetchPieces(token);
     } catch (err: unknown) {
       const msg =
         err instanceof Error
@@ -83,7 +136,7 @@ export function UploadSheetMusic({ studentId }: Props) {
       const isAbort = err instanceof Error && err.name === "AbortError";
       const friendly =
         msg === "Failed to fetch"
-          ? "Cannot reach server (backend may be down or CORS). Check http://localhost:8000"
+          ? "Cannot reach server. Check the backend is running."
           : isAbort
             ? "Request timed out (120s). Try a smaller file or check the backend."
             : msg;
@@ -93,73 +146,162 @@ export function UploadSheetMusic({ studentId }: Props) {
     }
   };
 
+  const handleDelete = async (pieceId: number) => {
+    console.log("[delete] clicking delete for piece:", pieceId);
+    const token = getToken();
+    if (!token) {
+      setError("No authentication token found.");
+      return;
+    }
+    setDeletingId(pieceId);
+    setError(null);
+    try {
+      const res = await fetch(`${API_URL}/ai/pieces/${pieceId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      console.log("[delete] response status:", res.status);
+      if (!res.ok) {
+        const text = await res.text();
+        const data = (() => {
+          try {
+            return text ? JSON.parse(text) : {};
+          } catch {
+            return {};
+          }
+        })();
+        if (process.env.NODE_ENV === "development") {
+          console.warn("[UploadSheetMusic] Delete failed", res.status, text?.slice(0, 300));
+        }
+        throw new Error(typeof data?.detail === "string" ? data.detail : "Failed to delete piece");
+      }
+      console.log("[delete] calling fetchPieces");
+      await fetchPieces();
+      console.log("[delete] fetchPieces done, pieces state:", pieces);
+    } catch (err) {
+      if (process.env.NODE_ENV === "development") {
+        console.warn("[UploadSheetMusic] Delete error", err);
+      }
+      setError(err instanceof Error ? err.message : "Failed to delete piece");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const summaryLine = scoreSummary
+    ? [
+        scoreSummary.key_signature ?? "—",
+        `${scoreSummary.measure_count} measures`,
+        `${scoreSummary.total_notes} notes`,
+      ].join(" · ")
+    : null;
+
   return (
     <section className="rounded-2xl bg-[#1A1D27] p-6 shadow-xl">
-      <h2 className="text-lg font-semibold text-white">🎼 Upload Sheet Music</h2>
-      <p className="mt-1 text-sm text-[#B0B7D6]">
-        Upload MusicXML sheet music (.xml or .mxl)
+      <h2 className="text-lg font-semibold text-white">Upload Sheet Music</h2>
+      <p className="mt-0.5 text-sm text-[#8B92B0]">
+        MusicXML (.xml or .mxl)
       </p>
 
-      <div className="mt-4 space-y-4">
-        <label className="space-y-1 text-sm text-white">
-          Piece Title
+      <div className="mt-4 space-y-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
           <input
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Für Elise — Beethoven"
-            className="w-full rounded-xl border border-white/10 bg-[#111827] px-3 py-2 text-sm text-white outline-none focus:border-purple-400"
+            placeholder="Piece title"
+            className="min-w-0 flex-1 rounded-lg border border-white/10 bg-[#111827] px-3 py-2 text-sm text-white outline-none focus:border-purple-500/50"
           />
-        </label>
-
-        <label className="space-y-1 text-sm text-white">
-          Sheet Music (MusicXML)
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".xml,.mxl,application/vnd.recordare.musicxml+xml,application/octet-stream"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="w-full rounded-xl border border-white/10 bg-[#111827] px-3 py-2 text-sm text-white file:mr-3 file:rounded-lg file:border-0 file:bg-purple-600 file:px-3 file:py-1 file:text-sm file:font-semibold file:text-white hover:file:bg-purple-500"
-          />
-        </label>
-
-        {message && (
-          <div className="rounded-xl bg-emerald-500/15 px-4 py-2 text-sm text-emerald-200">
-            {message}
-          </div>
+          <label className="flex min-w-0 flex-1 cursor-pointer items-center rounded-lg border border-white/10 bg-[#111827] px-3 py-2 text-sm text-[#B0B7D6] file:mr-2 file:border-0 file:bg-transparent file:text-sm file:text-white">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".xml,.mxl,application/vnd.recordare.musicxml+xml,application/octet-stream"
+              onChange={(e) => {
+                const f = e.target.files?.[0] ?? null;
+                setFile(f);
+                if (f?.name) setTitle(f.name.replace(/\.[^/.]+$/, ""));
+              }}
+              className="hidden"
+            />
+            {file ? file.name : "Choose file…"}
+          </label>
+        </div>
+        {summaryLine && (
+          <p className="text-xs text-[#8B92B0]">{summaryLine}</p>
         )}
         {error && (
-          <div className="rounded-xl bg-rose-500/15 px-4 py-2 text-sm text-rose-200">
+          <div className="rounded-lg bg-rose-500/15 px-3 py-2 text-sm text-rose-200">
             {error}
           </div>
         )}
-
-        {scoreSummary && (
-          <div className="rounded-xl border border-purple-500/30 bg-[#111827] p-4">
-            <h3 className="mb-2 text-sm font-semibold text-purple-300">
-              Parsed score summary
-            </h3>
-            <ul className="space-y-1 text-sm text-[#B0B7D6]">
-              {scoreSummary.key_signature != null && (
-                <li>Key: {scoreSummary.key_signature}</li>
-              )}
-              {scoreSummary.time_signature != null && (
-                <li>Time: {scoreSummary.time_signature}</li>
-              )}
-              <li>Measures: {scoreSummary.measure_count}</li>
-              <li>Total notes: {scoreSummary.total_notes}</li>
-            </ul>
-          </div>
-        )}
-
         <button
           type="button"
           disabled={loading}
           onClick={handleSubmit}
-          className="inline-flex items-center justify-center rounded-xl bg-purple-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-60"
+          className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {loading ? "Uploading..." : "Upload MusicXML 🎼"}
+          {loading ? "Uploading…" : "Upload"}
         </button>
+      </div>
+
+      <div className="mt-6">
+        <h3 className="mb-2 text-sm font-medium text-[#B0B7D6]">Uploaded pieces</h3>
+        {piecesError && (
+          <p className="mb-2 text-sm text-rose-300">{piecesError}</p>
+        )}
+        {piecesLoading ? (
+          <p className="text-sm text-[#8B92B0]">Loading…</p>
+        ) : pieces.length === 0 ? (
+          <p className="text-sm text-[#8B92B0]">No pieces yet. Upload a file above.</p>
+        ) : (
+          <ul className="divide-y divide-white/5">
+            {pieces.map((piece) => (
+              <li
+                key={piece.id}
+                className="flex items-center gap-3 py-2.5 first:pt-0"
+              >
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-white">
+                  {piece.title}
+                </span>
+                <span className="shrink-0 text-xs text-[#8B92B0]">
+                  {[
+                    piece.score_summary?.key_signature,
+                    piece.score_summary?.measure_count != null
+                      ? `${piece.score_summary.measure_count} msr`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || "—"}
+                </span>
+                <span className="shrink-0 text-xs text-[#8B92B0]">
+                  {new Date(piece.created_at).toLocaleDateString()}
+                </span>
+                <button
+                  type="button"
+                  disabled={deletingId === piece.id}
+                  onClick={(e) => {
+                    console.log("[delete] onClick fired");
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleDelete(piece.id);
+                  }}
+                  className="shrink-0 rounded p-1.5 text-[#8B92B0] hover:bg-white/10 hover:text-rose-300 disabled:opacity-50"
+                  title="Delete"
+                  aria-label="Delete piece"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 6h18" />
+                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                    <line x1="10" y1="11" x2="10" y2="17" />
+                    <line x1="14" y1="11" x2="14" y2="17" />
+                  </svg>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </section>
   );

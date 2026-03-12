@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { API_URL } from "../lib/api";
 import { getToken } from "../lib/auth";
 
 const students = [
@@ -60,7 +61,7 @@ export function CommunicationHub() {
 
       console.log("[homework] sending", payload);
 
-      const res = await fetch("http://localhost:8000/communication/homework", {
+      const res = await fetch(`${API_URL}/communication/homework`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -99,7 +100,7 @@ export function CommunicationHub() {
     }
 
     try {
-      const res = await fetch("http://localhost:8000/communication/notes", {
+      const res = await fetch(`${API_URL}/communication/notes`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { API_URL } from "../lib/api";
 import { getStudentId, getStudentToken } from "../lib/auth";
 
 type TeacherNote = {
@@ -16,34 +17,36 @@ export function TeacherNotes() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchNotes = async () => {
-      setLoading(true);
-      setError(null);
-
-      try {
-        const res = await fetch(
-          `http://localhost:8000/communication/notes/student/${getStudentId()}`,
-          {
-            headers: {
-              Authorization: `Bearer ${getStudentToken()}`,
-            },
-          }
-        );
-        if (!res.ok) {
-          throw new Error(`Failed to load notes (${res.status})`);
-        }
-        const data = await res.json();
-        setNotes(data);
-      } catch (err: any) {
-        setError(err?.message || "Failed to load notes");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchNotes();
+  const fetchNotes = useCallback(async () => {
+    const studentId = getStudentId();
+    const token = getStudentToken();
+    if (!studentId || !token) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `${API_URL}/communication/notes/student/${studentId}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) throw new Error(`Failed to load notes (${res.status})`);
+      const data = await res.json();
+      setNotes(data);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to load notes");
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchNotes();
+  }, [fetchNotes]);
+
+  useEffect(() => {
+    const onFocus = () => fetchNotes();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [fetchNotes]);
 
   return (
     <section className="rounded-2xl bg-[#252A3D] p-6 shadow-xl">

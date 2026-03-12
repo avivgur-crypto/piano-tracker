@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from auth import get_current_user
+from auth import ensure_teacher, get_current_user
 from database import get_db
 from models import Homework, TeacherNote, User
 from schemas import (
@@ -15,14 +15,6 @@ from schemas import (
 )
 
 router = APIRouter()
-
-
-def ensure_teacher(user: User):
-    if user.role != "teacher":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Teacher-only endpoint"
-        )
-    return user
 
 
 def ensure_student_owner(student_id: int, user: User):

@@ -71,3 +71,10 @@ async def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
+
+def ensure_teacher(user: User):
+    if user.role != "teacher":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Teacher-only endpoint"
+        )

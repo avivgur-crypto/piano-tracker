@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+import { API_URL } from "../../lib/api";
 import { saveAuth } from "../../lib/auth";
 
 export default function LoginPage() {
@@ -24,7 +25,7 @@ export default function LoginPage() {
 
       console.log("[login] submitting", { email, password });
 
-      const res = await fetch("http://localhost:8000/auth/login", {
+      const res = await fetch(`${API_URL}/auth/login`, {
         method: "POST",
         body: formData,
       });

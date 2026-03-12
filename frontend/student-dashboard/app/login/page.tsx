@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+import { API_URL } from "../../lib/api";
 import { saveStudentAuth } from "../../lib/auth";
 
 export default function StudentLoginPage() {
@@ -21,7 +22,7 @@ export default function StudentLoginPage() {
       formData.append("username", email);
       formData.append("password", password);
 
-      const res = await fetch("http://localhost:8000/auth/login", {
+      const res = await fetch(`${API_URL}/auth/login`, {
         method: "POST",
         body: formData,
       });

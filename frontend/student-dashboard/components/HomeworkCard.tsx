@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { API_URL } from "../lib/api";
 import { getStudentId, getStudentToken } from "../lib/auth";
 
 type HomeworkItem = {
@@ -42,40 +43,42 @@ export function HomeworkCard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchHomework = async () => {
-      setLoading(true);
-      setError(null);
-
-      try {
-        const res = await fetch(
-          `http://localhost:8000/communication/homework/student/${getStudentId()}`,
-          {
-            headers: {
-              Authorization: `Bearer ${getStudentToken()}`,
-            },
-          }
-        );
-        if (!res.ok) {
-          throw new Error(`Failed to load homework (${res.status})`);
-        }
-        const data = await res.json();
-        setItems(data);
-      } catch (err: any) {
-        setError(err?.message || "Failed to load homework");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchHomework();
+  const fetchHomework = useCallback(async () => {
+    const studentId = getStudentId();
+    const token = getStudentToken();
+    if (!studentId || !token) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `${API_URL}/communication/homework/student/${studentId}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) throw new Error(`Failed to load homework (${res.status})`);
+      const data = await res.json();
+      setItems(data);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to load homework");
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchHomework();
+  }, [fetchHomework]);
+
+  useEffect(() => {
+    const onFocus = () => fetchHomework();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [fetchHomework]);
 
   const markDone = async (id: number) => {
     setError(null);
     try {
       const res = await fetch(
-        `http://localhost:8000/communication/homework/${id}/done`,
+        `${API_URL}/communication/homework/${id}/done`,
         {
           method: "PATCH",
           headers: {

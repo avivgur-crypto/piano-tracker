@@ -1,6 +1,7 @@
 import { Achievements } from "@/components/Achievements";
 import { AIInsights } from "@/components/AIInsights";
 import { HomeworkCard } from "@/components/HomeworkCard";
+import { MyPieces } from "@/components/MyPieces";
 import { TeacherNotes } from "@/components/TeacherNotes";
 import { WeeklyPracticeGraph } from "@/components/WeeklyPracticeGraph";
 
@@ -67,6 +68,10 @@ export default function Home() {
 
         <section className="mt-10">
           <AIInsights />
+        </section>
+
+        <section className="mt-10">
+          <MyPieces />
         </section>
 
         <section className="mt-10 grid gap-6 lg:grid-cols-3">
