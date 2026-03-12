@@ -75,20 +75,7 @@ function buildVelocityTimeline(events: SessionEvent[]) {
   }));
 }
 
-// ── MIDI Playback via Tone.js Sampler (Salamander piano samples) ─────────────
-
-const SAMPLER_URLS: Record<string, string> = {
-  A0: "A0.mp3", C1: "C1.mp3", "D#1": "Ds1.mp3", "F#1": "Fs1.mp3",
-  A1: "A1.mp3", C2: "C2.mp3", "D#2": "Ds2.mp3", "F#2": "Fs2.mp3",
-  A2: "A2.mp3", C3: "C3.mp3", "D#3": "Ds3.mp3", "F#3": "Fs3.mp3",
-  A3: "A3.mp3", C4: "C4.mp3", "D#4": "Ds4.mp3", "F#4": "Fs4.mp3",
-  A4: "A4.mp3", C5: "C5.mp3", "D#5": "Ds5.mp3", "F#5": "Fs5.mp3",
-  A5: "A5.mp3", C6: "C6.mp3", "D#6": "Ds6.mp3", "F#6": "Fs6.mp3",
-  A6: "A6.mp3", C7: "C7.mp3", "D#7": "Ds7.mp3", "F#7": "Fs7.mp3",
-  A7: "A7.mp3", C8: "C8.mp3",
-};
-const SAMPLER_BASE_URL =
-  "https://gleitz.github.io/midi-js-soundfonts/MusyngKite/acoustic_grand_piano-mp3/";
+// ── MIDI Playback via Tone.js PolySynth (piano-like) ─────────────────────────
 
 function SessionRow({
   session,
@@ -101,41 +88,39 @@ function SessionRow({
 }) {
   const [open, setOpen] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const [samplerReady, setSamplerReady] = useState(false);
   const stopRef = useRef(false);
-  const samplerRef = useRef<unknown>(null);
+  const synthRef = useRef<unknown>(null);
 
   useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-
-    (async () => {
-      const Tone = (await import("tone")).default ?? (await import("tone"));
-      const sampler = new Tone.Sampler({
-        urls: SAMPLER_URLS,
-        baseUrl: SAMPLER_BASE_URL,
-        onload: () => {
-          if (!cancelled) setSamplerReady(true);
-        },
-      }).toDestination();
-      samplerRef.current = sampler;
-      await Tone.loaded();
-      if (!cancelled) setSamplerReady(true);
-    })();
-
     return () => {
-      cancelled = true;
+      if (synthRef.current) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (synthRef.current as any).dispose?.();
+        synthRef.current = null;
+      }
     };
-  }, [open]);
+  }, []);
 
   const handlePlay = async () => {
     const Tone = (await import("tone")).default ?? (await import("tone"));
     await Tone.start();
-    await Tone.loaded();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sampler = samplerRef.current as any;
-    if (!sampler) return;
+    if (synthRef.current) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (synthRef.current as any).dispose?.();
+    }
+
+    const synth = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: "triangle" },
+      envelope: {
+        attack: 0.005,
+        decay: 0.3,
+        sustain: 0.1,
+        release: 1.2,
+      },
+      volume: -6,
+    }).toDestination();
+    synthRef.current = synth;
 
     stopRef.current = false;
     setPlaying(true);
@@ -156,7 +141,7 @@ function SessionRow({
         : 0.3;
       const vel = evt.velocity / 127;
 
-      sampler.triggerAttackRelease(evt.note, dur, undefined, vel);
+      synth.triggerAttackRelease(evt.note, dur, undefined, vel);
 
       const idx = ons.indexOf(evt);
       const nextOn = ons[idx + 1];
@@ -173,9 +158,9 @@ function SessionRow({
 
   const handleStop = () => {
     stopRef.current = true;
-    if (samplerRef.current) {
+    if (synthRef.current) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (samplerRef.current as any).releaseAll?.();
+      (synthRef.current as any).releaseAll?.();
     }
     setPlaying(false);
   };
@@ -233,13 +218,6 @@ function SessionRow({
                 className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-500"
               >
                 ⏹ Stop
-              </button>
-            ) : !samplerReady ? (
-              <button
-                disabled
-                className="rounded-lg bg-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-400 cursor-not-allowed"
-              >
-                Loading…
               </button>
             ) : (
               <button
