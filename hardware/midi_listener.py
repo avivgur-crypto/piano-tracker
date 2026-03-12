@@ -80,7 +80,7 @@ SILENCE_TIMEOUT = 5  # seconds of silence before session auto-ends
 
 
 def _get_active_session():
-    """Fetch the active session for this device. Returns (student_id, piece_id) or defaults."""
+    """Fetch the active session for this device. Returns (student_id, piece_id) or None if 404/error."""
     try:
         resp = requests.get(f"{API_URL}/sessions/active/{DEVICE_ID}", timeout=5)
         if resp.ok:
@@ -91,12 +91,16 @@ def _get_active_session():
             return sid, pid
     except Exception as e:
         print(f"    [active] Could not fetch active session: {e}")
-    return STUDENT_ID, None
+    return None
 
 
 def _send_session(events, session_start, session_end, total_notes):
     """POST collected events to the backend API."""
-    student_id, piece_id = _get_active_session()
+    active = _get_active_session()
+    if active is None:
+        print("\n⏸ No active session — waiting for student to start practicing.")
+        return
+    student_id, piece_id = active
     duration = int((session_end - session_start).total_seconds())
     payload = {
         "device_id": DEVICE_ID,

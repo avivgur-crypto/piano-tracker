@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { API_URL } from "../lib/api";
 import { getStudentId, getStudentToken } from "../lib/auth";
 
@@ -9,13 +9,35 @@ interface Piece {
   title: string;
 }
 
+interface SessionSummary {
+  id: number;
+  piece_id: number | null;
+  duration_seconds: number;
+  total_notes: number;
+}
+
 const DEVICE_ID = "keysight-pi";
+
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}m ${s}s`;
+}
+
+function pieceDisplayName(pieceId: number | null, pieces: Piece[]): string {
+  if (pieceId == null) return "Free Play 🎵";
+  const p = pieces.find((x) => x.id === pieceId);
+  return p ? p.title : "Free Play 🎵";
+}
 
 export function StartPracticing() {
   const [pieces, setPieces] = useState<Piece[]>([]);
   const [selectedPieceId, setSelectedPieceId] = useState<string>("free");
   const [isLive, setIsLive] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [lastSession, setLastSession] = useState<SessionSummary | null>(null);
+  const stopTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const fetchPieces = useCallback(async () => {
     const token = getStudentToken();
@@ -90,9 +112,17 @@ export function StartPracticing() {
     }
   };
 
+  useEffect(() => {
+    return () => {
+      stopTimeoutsRef.current.forEach(clearTimeout);
+      stopTimeoutsRef.current = [];
+    };
+  }, []);
+
   const handleStop = async () => {
     const token = getStudentToken();
-    if (!token) return;
+    const studentId = getStudentId();
+    if (!token || !studentId) return;
 
     setLoading(true);
     try {
@@ -101,10 +131,41 @@ export function StartPracticing() {
         headers: { Authorization: `Bearer ${token}` },
       });
       setIsLive(false);
-    } catch {
-      /* ignore */
-    } finally {
+      setStopping(true);
       setLoading(false);
+
+      const t1 = setTimeout(async () => {
+        try {
+          const res = await fetch(
+            `${API_URL}/sessions?student_id=${studentId}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          if (res.ok) {
+            const list: SessionSummary[] = await res.json();
+            const first = list[0];
+            if (first) {
+              setLastSession({
+                id: first.id,
+                piece_id: first.piece_id ?? null,
+                duration_seconds: first.duration_seconds,
+                total_notes: first.total_notes,
+              });
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+        setStopping(false);
+
+        const t2 = setTimeout(() => {
+          setLastSession(null);
+        }, 5000);
+        stopTimeoutsRef.current.push(t2);
+      }, 7000);
+      stopTimeoutsRef.current.push(t1);
+    } catch {
+      setLoading(false);
+      setStopping(false);
     }
   };
 
@@ -112,7 +173,43 @@ export function StartPracticing() {
     <div className="rounded-2xl bg-[#252A3D] p-6 shadow-xl">
       <h2 className="mb-4 text-xl font-bold text-white">Start Practicing</h2>
 
-      {isLive ? (
+      {stopping ? (
+        <div className="flex flex-col items-center gap-4 py-4">
+          <svg
+            className="h-10 w-10 animate-spin text-[#58CC02]"
+            viewBox="0 0 24 24"
+            fill="none"
+          >
+            <circle
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              strokeWidth="4"
+              className="opacity-25"
+            />
+            <path
+              d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+              fill="currentColor"
+              className="opacity-75"
+            />
+          </svg>
+          <p className="text-[#B0B7D6]">Sending session…</p>
+        </div>
+      ) : lastSession ? (
+        <div className="rounded-xl border-2 border-[#58CC02] bg-[#58CC02]/10 p-5">
+          <p className="text-xl font-bold text-[#58CC02]">✅ Session saved!</p>
+          <p className="mt-2 text-white">
+            {pieceDisplayName(lastSession.piece_id, pieces)}
+          </p>
+          <p className="mt-1 text-sm text-[#A3FFB5]">
+            {formatDuration(lastSession.duration_seconds)}
+          </p>
+          <p className="mt-0.5 text-sm text-[#A3FFB5]">
+            {lastSession.total_notes} notes played
+          </p>
+        </div>
+      ) : isLive ? (
         <div className="flex flex-col items-center gap-4">
           <div className="flex items-center gap-2 rounded-xl bg-[#1a2a1a] px-5 py-3">
             <span className="relative flex h-3 w-3">
