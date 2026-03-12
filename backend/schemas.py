@@ -124,3 +124,9 @@ class AIReportOut(BaseModel):
 class AnalyzeSessionRequest(BaseModel):
     session_id: Optional[int] = None
     student_id: int
+
+
+class PeriodSummaryOut(BaseModel):
+    period: str
+    session_count: int
+    summary: Optional[str] = None

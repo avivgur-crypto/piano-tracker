@@ -5,6 +5,7 @@ import logging
 import os
 import tempfile
 import zipfile
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -17,7 +18,7 @@ from sqlalchemy.future import select
 from auth import ensure_teacher, get_current_user
 from database import get_db
 from models import AIReport, Piece, Session, User
-from schemas import AIReportOut, AnalyzeSessionRequest, PieceOut, PieceUploadSummary
+from schemas import AIReportOut, AnalyzeSessionRequest, PeriodSummaryOut, PieceOut, PieceUploadSummary
 
 router = APIRouter()
 
@@ -414,6 +415,85 @@ async def get_student_reports(
         )
         for r in reports
     ]
+
+
+# ── GET /ai/reports/student/{student_id}/period ───────────────────────────────
+
+PERIOD_DELTAS = {
+    "week": timedelta(weeks=1),
+    "month": timedelta(days=30),
+    "year": timedelta(days=365),
+}
+
+
+@router.get("/reports/student/{student_id}/period", response_model=PeriodSummaryOut)
+async def get_period_summary(
+    student_id: int,
+    period: str = "week",
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    ensure_teacher(current_user)
+
+    if period not in PERIOD_DELTAS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"period must be one of: {', '.join(PERIOD_DELTAS)}",
+        )
+
+    cutoff = datetime.utcnow() - PERIOD_DELTAS[period]
+    result = await db.execute(
+        select(AIReport)
+        .where(AIReport.student_id == student_id, AIReport.created_at >= cutoff)
+        .order_by(AIReport.created_at.desc())
+    )
+    reports = result.scalars().all()
+
+    if not reports:
+        return PeriodSummaryOut(period=period, session_count=0, summary=None)
+
+    if not client:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="OPENAI_API_KEY is not set. Add it to backend/.env",
+        )
+
+    reports_text = "\n---\n".join(
+        f"[{r.created_at.isoformat()}] {r.teacher_report or '(no report)'}"
+        for r in reports
+    )
+
+    prompt = (
+        f"You are a piano teacher assistant. Given these {len(reports)} practice session "
+        f"reports from the past {period}, synthesize a concise period summary. Include:\n"
+        "1. PROGRESS: 2-3 sentences on overall trend\n"
+        "2. COMMON ERRORS: top 3 recurring mistakes across sessions\n"
+        "3. RECOMMENDATIONS: 3 bullet points for the teacher\n"
+        "Keep it practical and under 200 words total.\n\n"
+        f"Reports:\n{reports_text}"
+    )
+
+    def _call_gpt(p: str) -> str:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": p}],
+        )
+        return (response.choices[0].message.content or "").strip()
+
+    try:
+        summary = await asyncio.to_thread(_call_gpt, prompt)
+    except Exception as e:
+        logger.exception("OpenAI period summary error: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"AI summary failed: {_safe_ai_error(e)}",
+        )
+
+    return PeriodSummaryOut(
+        period=period,
+        session_count=len(reports),
+        summary=summary,
+    )
 
 
 # ── GET /ai/pieces/student/{student_id} ──────────────────────────────────────
