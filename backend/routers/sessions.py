@@ -96,8 +96,12 @@ async def create_session(session: SessionCreate, db: AsyncSession = Depends(get_
         raise
 
 @router.get("/sessions", response_model=List[SessionResponse])
-async def list_sessions(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(DBSession))
+async def list_sessions(student_id: Optional[int] = None, db: AsyncSession = Depends(get_db)):
+    query = select(DBSession)
+    if student_id is not None:
+        query = query.where(DBSession.student_id == student_id)
+    query = query.order_by(DBSession.created_at.desc())
+    result = await db.execute(query)
     sessions = result.scalars().all()
     return [
         SessionResponse(

@@ -8,6 +8,8 @@ export type SessionEvent = {
 export type Session = {
   id: number;
   device_id: string;
+  student_id: number | null;
+  piece_id: number | null;
   started_at: string;
   ended_at: string;
   duration_seconds: number;

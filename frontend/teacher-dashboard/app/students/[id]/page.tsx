@@ -2,6 +2,7 @@ import { ActivityFeed } from "../../../components/ActivityFeed";
 import { CommunicationHub } from "../../../components/CommunicationHub";
 import { ConsistencyChart } from "../../../components/ConsistencyChart";
 import { MistakeHeatmap } from "../../../components/MistakeHeatmap";
+import { SessionsList } from "../../../components/SessionsList";
 import { StudentHeader } from "../../../components/StudentHeader";
 import { TeacherAIReport } from "../../../components/TeacherAIReport";
 import { UploadSheetMusic } from "../../../components/UploadSheetMusic";
@@ -28,7 +29,10 @@ export default async function StudentPage({ params }: Props) {
       <div className="mx-auto max-w-7xl space-y-6">
         <StudentHeader name={name} />
         <UploadSheetMusic studentId={Number(id)} />
-        <TeacherAIReport studentId={id} />
+        <SessionsList studentId={id} />
+        <div id="ai-report-section">
+          <TeacherAIReport studentId={id} />
+        </div>
         <CommunicationHub />
         <ConsistencyChart />
         <div className="grid gap-6 lg:grid-cols-2">
