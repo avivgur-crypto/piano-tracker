@@ -75,11 +75,20 @@ function buildVelocityTimeline(events: SessionEvent[]) {
   }));
 }
 
-// ── MIDI Playback via Tone.js ────────────────────────────────────────────────
+// ── MIDI Playback via Tone.js Sampler (Salamander piano samples) ─────────────
 
-function noteNameToFreq(name: string): string {
-  return name.replace("#", "#");
-}
+const SAMPLER_URLS: Record<string, string> = {
+  A0: "A0.mp3", C1: "C1.mp3", "D#1": "Ds1.mp3", "F#1": "Fs1.mp3",
+  A1: "A1.mp3", C2: "C2.mp3", "D#2": "Ds2.mp3", "F#2": "Fs2.mp3",
+  A2: "A2.mp3", C3: "C3.mp3", "D#3": "Ds3.mp3", "F#3": "Fs3.mp3",
+  A3: "A3.mp3", C4: "C4.mp3", "D#4": "Ds4.mp3", "F#4": "Fs4.mp3",
+  A4: "A4.mp3", C5: "C5.mp3", "D#5": "Ds5.mp3", "F#5": "Fs5.mp3",
+  A5: "A5.mp3", C6: "C6.mp3", "D#6": "Ds6.mp3", "F#6": "Fs6.mp3",
+  A6: "A6.mp3", C7: "C7.mp3", "D#7": "Ds7.mp3", "F#7": "Fs7.mp3",
+  A7: "A7.mp3", C8: "C8.mp3",
+};
+const SAMPLER_BASE_URL =
+  "https://gleitz.github.io/midi-js-soundfonts/MusyngKite/acoustic_grand_piano-mp3/";
 
 function SessionRow({
   session,
@@ -92,15 +101,42 @@ function SessionRow({
 }) {
   const [open, setOpen] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [samplerReady, setSamplerReady] = useState(false);
   const stopRef = useRef(false);
-  const synthRef = useRef<unknown>(null);
+  const samplerRef = useRef<unknown>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+
+    (async () => {
+      const Tone = (await import("tone")).default ?? (await import("tone"));
+      const sampler = new Tone.Sampler({
+        urls: SAMPLER_URLS,
+        baseUrl: SAMPLER_BASE_URL,
+        onload: () => {
+          if (!cancelled) setSamplerReady(true);
+        },
+      }).toDestination();
+      samplerRef.current = sampler;
+      await Tone.loaded();
+      if (!cancelled) setSamplerReady(true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   const handlePlay = async () => {
     const Tone = (await import("tone")).default ?? (await import("tone"));
     await Tone.start();
+    await Tone.loaded();
 
-    const synth = new Tone.PolySynth(Tone.Synth).toDestination();
-    synthRef.current = synth;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sampler = samplerRef.current as any;
+    if (!sampler) return;
+
     stopRef.current = false;
     setPlaying(true);
 
@@ -112,7 +148,6 @@ function SessionRow({
     for (const evt of ons) {
       if (stopRef.current) break;
 
-      const freq = noteNameToFreq(evt.note);
       const offEvt = offs.find(
         (o) => o.note === evt.note && o.time_offset_ms > evt.time_offset_ms
       );
@@ -121,9 +156,10 @@ function SessionRow({
         : 0.3;
       const vel = evt.velocity / 127;
 
-      synth.triggerAttackRelease(freq, dur, undefined, vel);
+      sampler.triggerAttackRelease(evt.note, dur, undefined, vel);
 
-      const nextOn = ons[ons.indexOf(evt) + 1];
+      const idx = ons.indexOf(evt);
+      const nextOn = ons[idx + 1];
       if (nextOn) {
         const gap = (nextOn.time_offset_ms - evt.time_offset_ms) / 1000;
         if (gap > 0) {
@@ -137,9 +173,9 @@ function SessionRow({
 
   const handleStop = () => {
     stopRef.current = true;
-    if (synthRef.current) {
+    if (samplerRef.current) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (synthRef.current as any).releaseAll?.();
+      (samplerRef.current as any).releaseAll?.();
     }
     setPlaying(false);
   };
@@ -197,6 +233,13 @@ function SessionRow({
                 className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-500"
               >
                 ⏹ Stop
+              </button>
+            ) : !samplerReady ? (
+              <button
+                disabled
+                className="rounded-lg bg-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-400 cursor-not-allowed"
+              >
+                Loading…
               </button>
             ) : (
               <button
