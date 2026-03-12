@@ -30,11 +30,11 @@ async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 app.include_router(auth_router.router, prefix="/auth")
 app.include_router(sessions.router)
 app.include_router(communication.router, prefix="/communication")
 app.include_router(ai_analysis.router, prefix="/ai")
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
