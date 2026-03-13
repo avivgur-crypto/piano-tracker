@@ -7,6 +7,7 @@ import {
   Loader2,
   Pause,
   Play,
+  Trash2,
   Volume2,
 } from "lucide-react";
 import {
@@ -35,6 +36,14 @@ type AIReport = {
 interface Props {
   studentId: string;
 }
+
+const DATE_FILTERS = [
+  { value: "all", label: "All" },
+  { value: "today", label: "Today" },
+  { value: "yesterday", label: "Yesterday" },
+  { value: "last_week", label: "This Week" },
+] as const;
+type DateFilter = (typeof DATE_FILTERS)[number]["value"];
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
@@ -203,19 +212,64 @@ function haltPlayback() {
   _instrument?.releaseAll?.();
 }
 
-/* ── ProgressBar (rAF-driven, no React re-renders) ──────────────────────── */
+/* ── ProgressBar (rAF-driven, canvas waveform, click/drag seeking) ───────── */
 
-function ProgressBar({ totalSec }: { totalSec: number }) {
+function ProgressBar({
+  totalSec,
+  events,
+  onSeek,
+}: {
+  totalSec: number;
+  events: SessionEvent[];
+  onSeek: (timeSec: number) => void;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const fillRef = useRef<HTMLDivElement>(null);
+  const headRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLSpanElement>(null);
+  const isDragging = useRef(false);
+  const dragTime = useRef(0);
 
+  // Draw MIDI note ticks on canvas
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const track = trackRef.current;
+    if (!canvas || !track || totalSec <= 0) return;
+
+    const rect = track.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, rect.width, rect.height);
+
+    const ons = noteOnEvents(events);
+    ctx.fillStyle = "rgba(255, 255, 255, 0.15)";
+    for (const evt of ons) {
+      const x = (evt.time_offset_ms / 1000 / totalSec) * rect.width;
+      const h = Math.max(2, (evt.velocity / 127) * rect.height);
+      ctx.fillRect(Math.round(x), rect.height - h, 1.5, h);
+    }
+  }, [events, totalSec]);
+
+  // Animate progress via rAF (skips updates while user is dragging)
   useEffect(() => {
     let raf: number;
     const tick = () => {
-      if (_tone && fillRef.current && textRef.current) {
+      if (
+        !isDragging.current &&
+        _tone &&
+        fillRef.current &&
+        headRef.current &&
+        textRef.current
+      ) {
         const sec = _tone.getTransport().seconds;
         const pct = totalSec > 0 ? Math.min(100, (sec / totalSec) * 100) : 0;
         fillRef.current.style.width = `${pct}%`;
+        headRef.current.style.left = `${pct}%`;
         textRef.current.textContent = `${fmtMmSs(sec)} / ${fmtMmSs(totalSec)}`;
       }
       raf = requestAnimationFrame(tick);
@@ -223,6 +277,61 @@ function ProgressBar({ totalSec }: { totalSec: number }) {
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [totalSec]);
+
+  // ── Seeking (pointer capture for click + drag) ──
+
+  const pctFromClientX = useCallback(
+    (clientX: number) => {
+      const track = trackRef.current;
+      if (!track || totalSec <= 0) return 0;
+      const rect = track.getBoundingClientRect();
+      return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    },
+    [totalSec]
+  );
+
+  const applyVisualSeek = useCallback(
+    (pct: number) => {
+      const p = `${pct * 100}%`;
+      if (fillRef.current) fillRef.current.style.width = p;
+      if (headRef.current) headRef.current.style.left = p;
+      if (textRef.current)
+        textRef.current.textContent = `${fmtMmSs(pct * totalSec)} / ${fmtMmSs(totalSec)}`;
+    },
+    [totalSec]
+  );
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      trackRef.current?.setPointerCapture(e.pointerId);
+      isDragging.current = true;
+      const pct = pctFromClientX(e.clientX);
+      dragTime.current = pct * totalSec;
+      applyVisualSeek(pct);
+    },
+    [totalSec, pctFromClientX, applyVisualSeek]
+  );
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!isDragging.current) return;
+      const pct = pctFromClientX(e.clientX);
+      dragTime.current = pct * totalSec;
+      applyVisualSeek(pct);
+    },
+    [totalSec, pctFromClientX, applyVisualSeek]
+  );
+
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!isDragging.current) return;
+      isDragging.current = false;
+      trackRef.current?.releasePointerCapture(e.pointerId);
+      onSeek(dragTime.current);
+    },
+    [onSeek]
+  );
 
   return (
     <div className="mt-3 flex items-center gap-3">
@@ -232,12 +341,27 @@ function ProgressBar({ totalSec }: { totalSec: number }) {
         <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#6C63FF]" />
       </span>
 
-      {/* Bar */}
-      <div className="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden">
+      {/* Scrubber track */}
+      <div
+        ref={trackRef}
+        className="relative flex-1 h-8 rounded-lg bg-white/5 overflow-hidden cursor-pointer select-none touch-none"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+      >
+        {/* MIDI note ticks (velocity waveform) */}
+        <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+        {/* Progress fill overlay */}
         <div
           ref={fillRef}
-          className="h-full rounded-full bg-gradient-to-r from-[#6C63FF] to-[#a78bfa]"
-          style={{ width: "0%", transition: "width 80ms linear" }}
+          className="absolute inset-y-0 left-0 bg-[#6C63FF]/20 pointer-events-none"
+          style={{ width: "0%" }}
+        />
+        {/* Playhead line */}
+        <div
+          ref={headRef}
+          className="absolute inset-y-0 w-0.5 bg-white/60 pointer-events-none"
+          style={{ left: "0%" }}
         />
       </div>
 
@@ -263,6 +387,8 @@ function SessionRow({
   anyLoading,
   onPlay,
   onStop,
+  onSeek,
+  onDelete,
 }: {
   session: Session;
   pieces: Piece[];
@@ -272,17 +398,31 @@ function SessionRow({
   anyLoading: boolean;
   onPlay: (sessionId: number, events: SessionEvent[], durationSec: number) => void;
   onStop: () => void;
+  onSeek: (timeSec: number) => void;
+  onDelete: (sessionId: number) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const noteDist = open ? buildNoteDistribution(session.events) : [];
   const velTimeline = open ? buildVelocityTimeline(session.events) : [];
 
+  const handleConfirmDelete = async () => {
+    setIsDeleting(true);
+    try {
+      await onDelete(session.id);
+    } catch {
+      setIsDeleting(false);
+      setConfirmDelete(false);
+    }
+  };
+
   return (
     <div className="overflow-hidden rounded-xl border border-white/10 bg-[#1A1D27]">
-      <button
-        type="button"
+      {/* Header row */}
+      <div
+        className="flex w-full cursor-pointer items-center gap-4 px-5 py-4 text-left transition hover:bg-white/5"
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-white/5"
       >
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -305,12 +445,53 @@ function SessionRow({
             </span>
           </div>
         </div>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setConfirmDelete(true);
+          }}
+          className="rounded-md p-1.5 text-zinc-500 transition hover:bg-rose-500/10 hover:text-rose-400"
+          title="Delete session"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
         {open ? (
           <ChevronUp className="h-5 w-5 shrink-0 text-zinc-400" />
         ) : (
           <ChevronDown className="h-5 w-5 shrink-0 text-zinc-400" />
         )}
-      </button>
+      </div>
+
+      {/* Inline delete confirmation */}
+      {confirmDelete && (
+        <div className="flex items-center justify-between border-t border-rose-500/20 bg-rose-500/10 px-5 py-3">
+          <span className="text-sm text-rose-200">
+            Permanently delete this session?
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setConfirmDelete(false)}
+              disabled={isDeleting}
+              className="rounded-lg px-3 py-1 text-xs text-zinc-400 transition hover:bg-white/5 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleConfirmDelete}
+              disabled={isDeleting}
+              className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-rose-500 disabled:opacity-60"
+            >
+              {isDeleting ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Trash2 className="h-3 w-3" />
+              )}
+              {isDeleting ? "Deleting…" : "Delete"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {open && (
         <div className="space-y-6 border-t border-white/10 px-5 py-5">
@@ -348,7 +529,11 @@ function SessionRow({
 
             {/* Progress bar — only visible while playing */}
             {playbackState === "playing" && playbackTotalSec > 0 && (
-              <ProgressBar totalSec={playbackTotalSec} />
+              <ProgressBar
+                totalSec={playbackTotalSec}
+                events={session.events}
+                onSeek={onSeek}
+              />
             )}
           </div>
 
@@ -459,6 +644,7 @@ export function SessionsList({ studentId }: Props) {
   const [pieces, setPieces] = useState<Piece[]>([]);
   const [reports, setReports] = useState<AIReport[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
 
   const [pianoReady, setPianoReady] = useState(false);
   const [pianoLoading, setPianoLoading] = useState(false);
@@ -468,34 +654,43 @@ export function SessionsList({ studentId }: Props) {
   const [loadingPlayId, setLoadingPlayId] = useState<number | null>(null);
   const [playbackTotalSec, setPlaybackTotalSec] = useState(0);
 
+  const playingEventsRef = useRef<SessionEvent[]>([]);
+  const playingTotalRef = useRef(0);
+
   /* ── Fetch data ── */
 
-  const fetchAll = useCallback(async () => {
-    const token = getToken();
-    if (!token) {
-      setLoading(false);
-      return;
-    }
-    const headers = { Authorization: `Bearer ${token}` };
-    try {
-      const [sessRes, piecesRes, reportsRes] = await Promise.all([
-        fetch(`${API_URL}/sessions?student_id=${studentId}`, { headers }),
-        fetch(`${API_URL}/ai/pieces/student/${studentId}`, { headers }),
-        fetch(`${API_URL}/ai/reports/student/${studentId}`, { headers }),
-      ]);
-      if (sessRes.ok) setSessions(await sessRes.json());
-      if (piecesRes.ok) setPieces(await piecesRes.json());
-      if (reportsRes.ok) setReports(await reportsRes.json());
-    } catch {
-      /* network error — ignore */
-    } finally {
-      setLoading(false);
-    }
-  }, [studentId]);
+  const fetchAll = useCallback(
+    async (filter: DateFilter = "all") => {
+      const token = getToken();
+      if (!token) {
+        setLoading(false);
+        return;
+      }
+      const headers = { Authorization: `Bearer ${token}` };
+      let sessUrl = `${API_URL}/sessions?student_id=${studentId}`;
+      if (filter !== "all") sessUrl += `&date_range=${filter}`;
+
+      try {
+        const [sessRes, piecesRes, reportsRes] = await Promise.all([
+          fetch(sessUrl, { headers }),
+          fetch(`${API_URL}/ai/pieces/student/${studentId}`, { headers }),
+          fetch(`${API_URL}/ai/reports/student/${studentId}`, { headers }),
+        ]);
+        if (sessRes.ok) setSessions(await sessRes.json());
+        if (piecesRes.ok) setPieces(await piecesRes.json());
+        if (reportsRes.ok) setReports(await reportsRes.json());
+      } catch {
+        /* network error — ignore */
+      } finally {
+        setLoading(false);
+      }
+    },
+    [studentId]
+  );
 
   useEffect(() => {
-    fetchAll();
-  }, [fetchAll]);
+    fetchAll(dateFilter);
+  }, [fetchAll, dateFilter]);
 
   /* ── Enable Audio (user-triggered preload) ── */
 
@@ -582,6 +777,8 @@ export function SessionsList({ studentId }: Props) {
           }, audioTime);
         }, totalSec + 1.5);
 
+        playingEventsRef.current = events;
+        playingTotalRef.current = totalSec;
         setLoadingPlayId(null);
         setPlayingId(sessionId);
         setPlaybackTotalSec(totalSec);
@@ -608,6 +805,82 @@ export function SessionsList({ studentId }: Props) {
     setPlaybackTotalSec(0);
   }, []);
 
+  /* ── Seek to a specific time (re-schedules future events) ── */
+
+  const handleSeek = useCallback((timeSec: number) => {
+    if (!_tone || !_instrument) return;
+
+    const transport = _tone.getTransport();
+    transport.stop();
+    transport.cancel();
+    _instrument.releaseAll();
+
+    const events = playingEventsRef.current;
+    const totalSec = playingTotalRef.current;
+
+    const ons = noteOnEvents(events);
+    const offs = events.filter(
+      (e: SessionEvent) =>
+        e.type === "note_off" ||
+        (e.type === "note_on" && e.velocity === 0)
+    );
+
+    for (const evt of ons) {
+      const evtTime = evt.time_offset_ms / 1000;
+      if (evtTime < timeSec - 0.05) continue;
+
+      const offEvt = offs.find(
+        (o: SessionEvent) =>
+          o.note === evt.note && o.time_offset_ms > evt.time_offset_ms
+      );
+      const dur = offEvt
+        ? Math.max(
+            0.05,
+            (offEvt.time_offset_ms - evt.time_offset_ms) / 1000
+          )
+        : 0.3;
+      const vel = Math.min(1, Math.max(0.3, (evt.velocity / 127) * 1.5));
+
+      transport.schedule((audioTime: number) => {
+        _instrument.triggerAttackRelease(evt.note, dur, audioTime, vel);
+      }, evtTime);
+    }
+
+    transport.schedule((audioTime: number) => {
+      _tone.Draw.schedule(() => {
+        setPlayingId(null);
+        setPlaybackTotalSec(0);
+      }, audioTime);
+    }, totalSec + 1.5);
+
+    transport.seconds = timeSec;
+    transport.start();
+  }, []);
+
+  /* ── Delete session ── */
+
+  const handleDelete = useCallback(
+    async (sessionId: number) => {
+      const token = getToken();
+      if (!token) return;
+
+      if (playingId === sessionId) {
+        haltPlayback();
+        setPlayingId(null);
+        setPlaybackTotalSec(0);
+      }
+
+      const res = await fetch(`${API_URL}/sessions/${sessionId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to delete session");
+
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+    },
+    [playingId]
+  );
+
   /* ── Cleanup on unmount ── */
 
   useEffect(() => () => haltPlayback(), []);
@@ -623,7 +896,26 @@ export function SessionsList({ studentId }: Props) {
 
   return (
     <section className="rounded-2xl bg-[#1A1D27] p-6 shadow-xl">
-      <h2 className="mb-4 text-lg font-semibold text-white">🎹 Sessions</h2>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold text-white">🎹 Sessions</h2>
+
+        {/* Date filter pills */}
+        <div className="flex gap-1.5">
+          {DATE_FILTERS.map((f) => (
+            <button
+              key={f.value}
+              onClick={() => setDateFilter(f.value)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                dateFilter === f.value
+                  ? "bg-[#6C63FF] text-white"
+                  : "bg-white/5 text-zinc-400 hover:bg-white/10 hover:text-zinc-200"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* ── Enable Audio banner ── */}
       {sessions.length > 0 && !pianoReady && (
@@ -684,6 +976,8 @@ export function SessionsList({ studentId }: Props) {
                 anyLoading={anyLoading}
                 onPlay={handlePlay}
                 onStop={handleStop}
+                onSeek={handleSeek}
+                onDelete={handleDelete}
               />
             );
           })}
