@@ -73,7 +73,7 @@ def pick_port(ports: list) -> str:
             pass
         print("Invalid choice. Try again.")
 
-API_URL = os.environ.get("API_URL", "http://localhost:8000")
+API_URL = os.environ.get("API_URL", "https://piano-tracker-backend-production.up.railway.app")
 DEVICE_ID = os.environ.get("DEVICE_ID", "keysight-pi")
 STUDENT_ID = int(os.environ.get("STUDENT_ID", "2"))
 # Session is uploaded to the server after this many seconds with no new notes (or on Ctrl+C).
@@ -139,6 +139,7 @@ def _send_session(events, session_start, session_end, total_notes):
 
 def listen(port_name: str):
     """Open the MIDI port and print events in real-time."""
+    global _cached_active
     print(f"\n🎵  Listening on '{port_name}' — press Ctrl+C to stop.")
     print(f"    Auto-send after {SILENCE_TIMEOUT}s of silence  |  API: {API_URL}  |  device: {DEVICE_ID}  |  default student_id: {STUDENT_ID}\n")
     print(f"{'TIME':<12} {'EVENT':<12} {'NOTE':<8} {'VELOCITY':<20} {'CHANNEL'}")
@@ -150,12 +151,14 @@ def listen(port_name: str):
     last_note_on_time = time.monotonic()
     silence_timer = None
     session_active = True
+    # When we first see an active session (student clicked Start), clear buffer so pre-Start notes aren't uploaded.
+    had_cleared_for_current_active = False
 
     lock = threading.Lock()
 
     def _on_silence():
         """Called when silence timeout fires (runs in timer thread)."""
-        nonlocal session_start, note_count, events, session_active
+        nonlocal session_start, note_count, events, session_active, had_cleared_for_current_active
         print(f"\n⏱  Silence detected ({SILENCE_TIMEOUT}s) — sending session…")
         with lock:
             if not events:
@@ -168,6 +171,7 @@ def listen(port_name: str):
             note_count = 0
             session_start = datetime.utcnow()
             session_active = True
+            had_cleared_for_current_active = False
         _send_session(snapshot, snap_start, datetime.utcnow(), snap_count)
 
     def _reset_silence_timer():
@@ -196,7 +200,20 @@ def listen(port_name: str):
                         f"{timestamp:<12} {'NOTE ON':<12} {note_name:<8} "
                         f"{vel_label:<20} ch={msg.channel + 1}"
                     )
+                    # When active session is first detected (student clicked Start), clear buffer so
+                    # pre-Start noise/silence is not included in the upload.
+                    active = _get_active_session()
                     with lock:
+                        if active is not None:
+                            _cached_active = active
+                            if not had_cleared_for_current_active:
+                                events.clear()
+                                note_count = 0
+                                session_start = now
+                                had_cleared_for_current_active = True
+                        # Recompute elapsed in case we just reset session_start
+                        elapsed = (now - session_start).total_seconds()
+                        elapsed_ms = int(elapsed * 1000)
                         note_count += 1
                         events.append({
                             "time_offset_ms": elapsed_ms,
@@ -224,9 +241,33 @@ def listen(port_name: str):
 
                 # ── Control Change (sustain pedal, etc.) ───────────────────
                 elif msg.type == 'control_change':
-                    if msg.control == 64:  # sustain pedal
+                    if msg.control == 64:  # sustain pedal (CC 64)
                         state = "DOWN 🦶" if msg.value >= 64 else "UP"
                         print(f"{timestamp:<12} {'SUSTAIN':<12} {state}")
+                        # Append sustain when we're in an active session (same semantics as notes)
+                        if not had_cleared_for_current_active:
+                            active = _get_active_session()
+                        with lock:
+                            if had_cleared_for_current_active:
+                                elapsed = (now - session_start).total_seconds()
+                                elapsed_ms = int(elapsed * 1000)
+                                events.append({
+                                    "type": "sustain",
+                                    "value": msg.value,  # 0 = OFF, 127 (or >0) = ON
+                                    "time": elapsed_ms,
+                                })
+                            elif not had_cleared_for_current_active and active is not None:
+                                _cached_active = active
+                                events.clear()
+                                note_count = 0
+                                session_start = now
+                                had_cleared_for_current_active = True
+                                elapsed_ms = 0
+                                events.append({
+                                    "type": "sustain",
+                                    "value": msg.value,
+                                    "time": elapsed_ms,
+                                })
                     else:
                         print(
                             f"{timestamp:<12} {'CC':<12} ctrl={msg.control:<5} "

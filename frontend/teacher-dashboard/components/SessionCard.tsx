@@ -40,12 +40,20 @@ export default function SessionCard({ session }: Props) {
               className="rounded-xl border border-zinc-800 bg-zinc-900/60 px-4 py-3"
             >
               <div className="flex items-center justify-between text-xs text-zinc-400">
-                <span>+{event.time_offset_ms} ms</span>
+                <span>+{(event.time ?? event.time_offset_ms ?? 0)} ms</span>
                 <span className="capitalize">{event.type}</span>
               </div>
               <div className="mt-1 flex items-center justify-between">
-                <span className="font-medium text-zinc-100">{event.note}</span>
-                <span className="text-xs text-zinc-300">vel {event.velocity}</span>
+                {event.type === "sustain" ? (
+                  <span className="text-xs text-zinc-300">
+                    pedal {event.value !== undefined && event.value > 0 ? "down" : "up"}
+                  </span>
+                ) : (
+                  <>
+                    <span className="font-medium text-zinc-100">{event.note}</span>
+                    <span className="text-xs text-zinc-300">vel {event.velocity}</span>
+                  </>
+                )}
               </div>
             </div>
           ))}

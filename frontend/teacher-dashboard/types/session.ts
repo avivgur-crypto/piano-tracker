@@ -1,8 +1,11 @@
 export type SessionEvent = {
-  time_offset_ms: number;
-  note: string;
-  velocity: number;
+  time_offset_ms?: number;
+  note?: string;
+  velocity?: number;
   type: string;
+  /** Sustain pedal: 0 = OFF, >0 (e.g. 127) = ON. Present when type === "sustain". */
+  time?: number;
+  value?: number;
 };
 
 export type Session = {

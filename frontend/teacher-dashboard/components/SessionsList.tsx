@@ -87,7 +87,23 @@ function pieceName(pieceId: number | null, pieces: Piece[]) {
 }
 
 function noteOnEvents(events: SessionEvent[]) {
-  return events.filter((e) => e.type === "note_on" && e.velocity > 0);
+  return events.filter(
+    (e): e is SessionEvent & { note: string; velocity: number; time_offset_ms: number } =>
+      e.type === "note_on" && (e.velocity ?? 0) > 0
+  );
+}
+
+/** Time in seconds for scheduling. Notes use time_offset_ms; sustain uses time (ms). */
+function getEventTimeSec(e: SessionEvent): number {
+  if (e.type === "sustain" && e.time != null) return e.time / 1000;
+  return (e.time_offset_ms ?? 0) / 1000;
+}
+
+/** Sort order for same-time events: pedal up first, then note_off, note_on, then pedal down. */
+function eventSortOrder(e: SessionEvent): number {
+  if (e.type === "sustain") return (e.value ?? 0) > 0 ? 3 : 0;
+  if (e.type === "note_off" || (e.type === "note_on" && (e.velocity ?? 0) === 0)) return 1;
+  return 2; // note_on
 }
 
 function buildNoteDistribution(events: SessionEvent[]) {
@@ -722,33 +738,76 @@ export function SessionsList({ studentId }: Props) {
         transport.seconds = 0;
 
         const ons = noteOnEvents(events);
-        const offs = events.filter(
-          (e: SessionEvent) =>
-            e.type === "note_off" ||
-            (e.type === "note_on" && e.velocity === 0)
+
+        // Sustain pedal state (updated by scheduled callbacks)
+        let pedalDown = false;
+        const heldNotes = new Set<string>();
+
+        // All events sorted by time; same time: sustain_up → note_off → note_on → sustain_down
+        const allEvents = [...events].filter(
+          (e) =>
+            e.type === "sustain" ||
+            e.type === "note_on" ||
+            e.type === "note_off"
+        );
+        allEvents.sort(
+          (a, b) =>
+            getEventTimeSec(a) - getEventTimeSec(b) ||
+            eventSortOrder(a) - eventSortOrder(b)
         );
 
-        for (const evt of ons) {
-          const timeSec = evt.time_offset_ms / 1000;
-          const offEvt = offs.find(
-            (o: SessionEvent) =>
-              o.note === evt.note && o.time_offset_ms > evt.time_offset_ms
-          );
-          const dur = offEvt
-            ? Math.max(
-                0.05,
-                (offEvt.time_offset_ms - evt.time_offset_ms) / 1000
-              )
-            : 0.3;
-          const vel = Math.min(1, Math.max(0.3, (evt.velocity / 127) * 1.5));
+        for (const evt of allEvents) {
+          const timeSec = getEventTimeSec(evt);
 
-          transport.schedule((audioTime: number) => {
-            instrument.triggerAttackRelease(evt.note, dur, audioTime, vel);
-          }, timeSec);
+          if (evt.type === "sustain") {
+            const value = evt.value ?? 0;
+            transport.schedule((audioTime: number) => {
+              if (value > 0) {
+                pedalDown = true;
+                (instrument as { pedalDown?: () => void }).pedalDown?.();
+              } else {
+                for (const note of heldNotes) {
+                  instrument.triggerRelease(note, audioTime);
+                }
+                heldNotes.clear();
+                pedalDown = false;
+                (instrument as { pedalUp?: () => void }).pedalUp?.();
+              }
+            }, timeSec);
+            continue;
+          }
+
+          const isOff =
+            evt.type === "note_off" || (evt.type === "note_on" && (evt.velocity ?? 0) === 0);
+          const note = evt.note!;
+          const timeOffsetMs = evt.time_offset_ms ?? 0;
+
+          if (isOff) {
+            transport.schedule((audioTime: number) => {
+              if (pedalDown) {
+                heldNotes.add(note);
+              } else {
+                instrument.triggerRelease(note, audioTime);
+              }
+            }, timeSec);
+          } else {
+            // note_on with velocity > 0
+            const vel = Math.min(
+              1,
+              Math.max(0.3, ((evt.velocity ?? 0) / 127) * 1.5)
+            );
+            transport.schedule((audioTime: number) => {
+              instrument.triggerAttack(note, audioTime, vel);
+            }, timeSec);
+          }
         }
 
-        const lastMs =
-          ons.length > 0 ? ons[ons.length - 1].time_offset_ms : 0;
+        const lastNoteMs = ons.length > 0 ? ons[ons.length - 1].time_offset_ms : 0;
+        const lastSustainMs = Math.max(
+          0,
+          ...events.filter((e) => e.type === "sustain").map((e) => e.time ?? 0)
+        );
+        const lastMs = Math.max(lastNoteMs, lastSustainMs);
         const totalSec = Math.max(lastMs / 1000, durationSec);
 
         transport.schedule((audioTime: number) => {
@@ -784,7 +843,7 @@ export function SessionsList({ studentId }: Props) {
     setPlaybackTotalSec(0);
   }, []);
 
-  /* ── Seek to a specific time (re-schedules future events) ── */
+  /* ── Seek to a specific time (re-schedules future events, restores pedal state) ── */
 
   const handleSeek = useCallback((timeSec: number) => {
     if (!_tone || !_instrument) return;
@@ -797,32 +856,78 @@ export function SessionsList({ studentId }: Props) {
     const events = playingEventsRef.current;
     const totalSec = playingTotalRef.current;
 
-    const ons = noteOnEvents(events);
-    const offs = events.filter(
-      (e: SessionEvent) =>
-        e.type === "note_off" ||
-        (e.type === "note_on" && e.velocity === 0)
+    // Replay events before timeSec to get correct pedal state (and held notes) at seek position
+    let pedalDown = false;
+    let heldNotes = new Set<string>();
+    const allEvents = [...events].filter(
+      (e) =>
+        e.type === "sustain" || e.type === "note_on" || e.type === "note_off"
+    );
+    allEvents.sort(
+      (a, b) =>
+        getEventTimeSec(a) - getEventTimeSec(b) ||
+        eventSortOrder(a) - eventSortOrder(b)
     );
 
-    for (const evt of ons) {
-      const evtTime = evt.time_offset_ms / 1000;
-      if (evtTime < timeSec - 0.05) continue;
+    for (const evt of allEvents) {
+      const evtTime = getEventTimeSec(evt);
+      if (evtTime < timeSec - 0.001) {
+        // Update pedal state for events before seek time
+        if (evt.type === "sustain") {
+          pedalDown = (evt.value ?? 0) > 0;
+          if (!pedalDown) heldNotes = new Set();
+        } else {
+          const isOff =
+            evt.type === "note_off" ||
+            (evt.type === "note_on" && (evt.velocity ?? 0) === 0);
+          const note = evt.note!;
+          if (isOff) {
+            if (pedalDown) heldNotes.add(note);
+          }
+        }
+        continue;
+      }
 
-      const offEvt = offs.find(
-        (o: SessionEvent) =>
-          o.note === evt.note && o.time_offset_ms > evt.time_offset_ms
-      );
-      const dur = offEvt
-        ? Math.max(
-            0.05,
-            (offEvt.time_offset_ms - evt.time_offset_ms) / 1000
-          )
-        : 0.3;
-      const vel = Math.min(1, Math.max(0.3, (evt.velocity / 127) * 1.5));
+      if (evt.type === "sustain") {
+        const value = evt.value ?? 0;
+        transport.schedule((audioTime: number) => {
+          if (value > 0) {
+            pedalDown = true;
+            (_instrument as { pedalDown?: () => void }).pedalDown?.();
+          } else {
+            for (const note of heldNotes) {
+              _instrument.triggerRelease(note, audioTime);
+            }
+            heldNotes.clear();
+            pedalDown = false;
+            (_instrument as { pedalUp?: () => void }).pedalUp?.();
+          }
+        }, evtTime);
+        continue;
+      }
 
-      transport.schedule((audioTime: number) => {
-        _instrument.triggerAttackRelease(evt.note, dur, audioTime, vel);
-      }, evtTime);
+      const isOff =
+        evt.type === "note_off" ||
+        (evt.type === "note_on" && (evt.velocity ?? 0) === 0);
+      const note = evt.note!;
+
+      if (isOff) {
+        transport.schedule((audioTime: number) => {
+          if (pedalDown) {
+            heldNotes.add(note);
+          } else {
+            _instrument.triggerRelease(note, audioTime);
+          }
+        }, evtTime);
+      } else {
+        const vel = Math.min(
+          1,
+          Math.max(0.3, ((evt.velocity ?? 0) / 127) * 1.5)
+        );
+        transport.schedule((audioTime: number) => {
+          _instrument.triggerAttack(note, audioTime, vel);
+        }, evtTime);
+      }
     }
 
     transport.schedule((audioTime: number) => {
