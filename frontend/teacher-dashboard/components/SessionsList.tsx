@@ -107,6 +107,18 @@ let _instType: "sampler" | "synth" | null = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _loadPromise: Promise<any> | null = null;
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function _initFallbackSynth(Tone: any) {
+  console.warn("Initialising PolySynth fallback");
+  const synth = new Tone.PolySynth(Tone.Synth).toDestination();
+  synth.set({
+    oscillator: { type: "triangle" },
+    envelope: { attack: 0.005, decay: 0.3, sustain: 0.2, release: 1.0 },
+  });
+  _instrument = synth;
+  _instType = "synth";
+}
+
 /**
  * Initialise (or return cached) piano instrument.
  * MUST be called from a user-gesture handler to satisfy AudioContext policy.
@@ -125,41 +137,42 @@ async function ensurePiano() {
   }
 
   _loadPromise = (async () => {
+    console.log("Attempting to load piano from:", SALAMANDER_BASE);
+    console.log("Sample URLs:", SALAMANDER_URLS);
+
     try {
       const sampler = new Tone.Sampler({
         urls: SALAMANDER_URLS,
         baseUrl: SALAMANDER_BASE,
+        onload: () => console.log("Sampler onload fired — all samples decoded"),
+        onerror: (e: unknown) => console.error("Sampler onerror:", e),
       }).toDestination();
 
       await Promise.race([
         Tone.loaded(),
         new Promise<never>((_, rej) =>
-          setTimeout(() => rej(new Error("timeout")), LOAD_TIMEOUT_MS)
+          setTimeout(() => rej(new Error("Sampler load timed out after " + LOAD_TIMEOUT_MS + "ms")), LOAD_TIMEOUT_MS)
         ),
       ]);
 
       _instrument = sampler;
       _instType = "sampler";
-      console.log("Salamander piano sampler loaded");
+      console.log("Salamander piano sampler loaded successfully");
     } catch (err) {
       console.warn("Sampler failed, falling back to PolySynth:", err);
-      const synth = new Tone.PolySynth(Tone.Synth).toDestination();
-      synth.set({
-        oscillator: { type: "triangle" },
-        envelope: { attack: 0.005, decay: 0.3, sustain: 0.2, release: 1.0 },
-      });
-      _instrument = synth;
-      _instType = "synth";
+      _initFallbackSynth(Tone);
     }
   })();
 
   try {
     await _loadPromise;
-    return { tone: Tone, instrument: _instrument!, type: _instType! };
-  } catch {
+  } catch (err) {
+    console.error("ensurePiano load promise rejected, forcing synth fallback:", err);
     _loadPromise = null;
-    throw new Error("Could not initialise audio");
+    if (!_instrument) _initFallbackSynth(Tone);
   }
+
+  return { tone: Tone, instrument: _instrument!, type: _instType! };
 }
 
 /** Stop Transport and release all sounding notes (synchronous-safe). */
