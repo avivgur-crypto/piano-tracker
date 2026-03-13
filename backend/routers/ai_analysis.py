@@ -85,14 +85,21 @@ def _parse_musicxml_to_score_structure(
             break
     except Exception:
         pass
-    # Key signature (music21.key.KeySignature)
+    # Key signature — prefer key.Key for a human-friendly name like "F major"
     try:
-        from music21 import key
-        for ks in score.recurse().getElementsByClass(key.KeySignature):
-            key_sig = getattr(ks, "name", None) or str(ks)
-            break
+        from music21 import key as m21key
+        analyzed = score.analyze("key")
+        if analyzed:
+            key_sig = f"{analyzed.tonic.name} {analyzed.mode}"
     except Exception:
-        pass
+        try:
+            from music21 import key as m21key
+            for ks in score.recurse().getElementsByClass(m21key.KeySignature):
+                k = ks.asKey()
+                key_sig = f"{k.tonic.name} {k.mode}" if k else str(ks)
+                break
+        except Exception:
+            pass
     # Tempo
     try:
         from music21 import tempo
@@ -546,6 +553,51 @@ async def get_student_pieces(
         )
         for p in pieces
     ]
+
+
+# ── GET /ai/pieces/{piece_id} ─────────────────────────────────────────────────
+
+@router.get("/pieces/{piece_id}", response_model=PieceOut)
+async def get_piece(
+    piece_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    piece = await db.get(Piece, piece_id)
+    if not piece:
+        raise HTTPException(status_code=404, detail="Piece not found")
+
+    if current_user.role == "student" and current_user.id != piece.student_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Students can only view their own pieces",
+        )
+
+    summary = None
+    if piece.score_json:
+        try:
+            data = json.loads(piece.score_json)
+            notes = data.get("notes") or []
+            summary = PieceUploadSummary(
+                key_signature=data.get("key_signature"),
+                time_signature=data.get("time_signature"),
+                measure_count=max((n.get("measure") or 0 for n in notes), default=0),
+                total_notes=len(notes),
+            )
+        except Exception:
+            pass
+
+    return PieceOut(
+        id=piece.id,
+        teacher_id=piece.teacher_id,
+        student_id=piece.student_id,
+        title=piece.title,
+        musicxml_data=piece.musicxml_data,
+        score_json=piece.score_json,
+        analysis_json=piece.analysis_json,
+        score_summary=summary,
+        created_at=piece.created_at,
+    )
 
 
 # ── DELETE /ai/pieces/{piece_id} ─────────────────────────────────────────────
