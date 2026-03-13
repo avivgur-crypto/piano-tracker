@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { API_URL } from "../lib/api";
 import { getStudentId, getStudentToken } from "../lib/auth";
-import { cleanKeySignature } from "../lib/music";
+import { cleanKeySignature } from "../lib/musicUtils";
 
 type PieceItem = {
   id: number;
