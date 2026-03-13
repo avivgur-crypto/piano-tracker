@@ -7,6 +7,10 @@ export function saveStudentAuth(token: string) {
   localStorage.setItem("student_token", token);
 }
 
+export function clearStudentAuth() {
+  localStorage.removeItem("student_token");
+}
+
 /**
  * Returns the logged-in student's user id. Must match backend JWT (user_id).
  * Used for GET /ai/pieces/student/{id}, homework, notes — same id the teacher uses when assigning.
