@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { API_URL } from "../../../lib/api";
 import { getToken } from "../../../lib/auth";
-import { cleanKeySignature } from "../../../lib/music";
+import { cleanKeySignature } from "../../../lib/musicUtils";
 
 type PieceData = {
   id: number;

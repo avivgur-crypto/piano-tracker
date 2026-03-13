@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { API_URL } from "../lib/api";
 import { getToken } from "../lib/auth";
-import { cleanKeySignature } from "../lib/music";
+import { cleanKeySignature } from "../lib/musicUtils";
 
 interface Props {
   studentId: number;
