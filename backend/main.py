@@ -18,7 +18,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:3001",
-        "https://piano-tracker-frontend.vercel.app",
+        "https://keysight-teacher.vercel.app",
+        "https://keysight-student.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
