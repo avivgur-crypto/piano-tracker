@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, JSON, ForeignKey, Text
+from sqlalchemy import Column, Index, Integer, String, DateTime, JSON, ForeignKey, Text
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
 
@@ -9,8 +9,8 @@ class Session(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     device_id = Column(String, index=True)
-    student_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    started_at = Column(DateTime)
+    student_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    started_at = Column(DateTime, index=True)
     ended_at = Column(DateTime)
     duration_seconds = Column(Integer)
     total_notes = Column(Integer)
@@ -22,10 +22,10 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True)
-    email = Column(String, unique=True, nullable=False)
+    email = Column(String, unique=True, nullable=False, index=True)
     hashed_password = Column(String, nullable=False)
     full_name = Column(String, nullable=False)
-    role = Column(String, nullable=False)  # "teacher" or "student"
+    role = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -34,11 +34,11 @@ class Homework(Base):
 
     id = Column(Integer, primary_key=True)
     teacher_id = Column(Integer, ForeignKey("users.id"))
-    student_id = Column(Integer, ForeignKey("users.id"))
+    student_id = Column(Integer, ForeignKey("users.id"), index=True)
     title = Column(String, nullable=False)
     instruction = Column(String)
     deadline = Column(DateTime)
-    status = Column(String, default="pending")  # pending / done
+    status = Column(String, default="pending")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -47,7 +47,7 @@ class TeacherNote(Base):
 
     id = Column(Integer, primary_key=True)
     teacher_id = Column(Integer, ForeignKey("users.id"))
-    student_id = Column(Integer, ForeignKey("users.id"))
+    student_id = Column(Integer, ForeignKey("users.id"), index=True)
     text = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -57,11 +57,11 @@ class Piece(Base):
 
     id = Column(Integer, primary_key=True)
     teacher_id = Column(Integer, ForeignKey("users.id"))
-    student_id = Column(Integer, ForeignKey("users.id"))
+    student_id = Column(Integer, ForeignKey("users.id"), index=True)
     title = Column(String, nullable=False)
     musicxml_data = Column(Text)
     score_json = Column(Text)
-    analysis_json = Column(JSON)  # deprecated; kept for backward compatibility
+    analysis_json = Column(JSON)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -69,8 +69,8 @@ class AIReport(Base):
     __tablename__ = "ai_reports"
 
     id = Column(Integer, primary_key=True)
-    session_id = Column(Integer, ForeignKey("sessions.id"), nullable=True)
-    student_id = Column(Integer, ForeignKey("users.id"))
+    session_id = Column(Integer, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=True, index=True)
+    student_id = Column(Integer, ForeignKey("users.id"), index=True)
     teacher_report = Column(Text)
     student_report = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)

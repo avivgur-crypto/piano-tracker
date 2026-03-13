@@ -10,7 +10,7 @@ from database import get_db, async_session
 from models import Session as DBSession, AIReport as DBAIReport
 from schemas import SessionCreate, SessionResponse
 from typing import Dict, List, Optional
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ class ActiveSessionResponse(BaseModel):
 
 @router.post("/sessions/active", response_model=ActiveSessionResponse)
 async def set_active_session(payload: ActiveSessionRequest):
+    logger.info("set_active_session device_id=%r student_id=%s", payload.device_id, payload.student_id)
     entry = {
         "device_id": payload.device_id,
         "student_id": payload.student_id,
@@ -47,7 +48,7 @@ async def set_active_session(payload: ActiveSessionRequest):
 
 @router.get("/sessions/active/{device_id}", response_model=ActiveSessionResponse)
 async def get_active_session(device_id: str):
-    print(f"[sessions] get_active_session received device_id={device_id!r}")
+    logger.debug("get_active_session device_id=%r", device_id)
     entry = active_sessions.get(device_id)
     if not entry:
         raise HTTPException(status_code=404, detail="No active session for this device")
@@ -60,9 +61,23 @@ async def clear_active_session(device_id: str):
 
 
 def parse_dt(s: str) -> datetime:
-    # Supports both naive ISO datetime and ISO with Z suffix.
     s = s.replace("Z", "+00:00")
     return datetime.fromisoformat(s)
+
+
+def _session_to_response(s: DBSession) -> SessionResponse:
+    return SessionResponse(
+        id=s.id,
+        device_id=s.device_id,
+        student_id=s.student_id,
+        started_at=s.started_at.isoformat(),
+        ended_at=s.ended_at.isoformat(),
+        duration_seconds=s.duration_seconds,
+        total_notes=s.total_notes,
+        events=s.events,
+        created_at=s.created_at,
+    )
+
 
 @router.post("/sessions", response_model=SessionResponse)
 async def create_session(session: SessionCreate, db: AsyncSession = Depends(get_db)):
@@ -81,17 +96,7 @@ async def create_session(session: SessionCreate, db: AsyncSession = Depends(get_
         db.add(db_session)
         await db.commit()
         await db.refresh(db_session)
-        return SessionResponse(
-            id=db_session.id,
-            device_id=db_session.device_id,
-            student_id=db_session.student_id,
-            started_at=db_session.started_at.isoformat(),
-            ended_at=db_session.ended_at.isoformat(),
-            duration_seconds=db_session.duration_seconds,
-            total_notes=db_session.total_notes,
-            events=db_session.events,
-            created_at=db_session.created_at
-        )
+        return _session_to_response(db_session)
     except Exception as e:
         logger.error(f"Session create error: {e}")
         logger.error(traceback.format_exc())
@@ -124,20 +129,7 @@ async def list_sessions(
 
     query = query.order_by(DBSession.created_at.desc())
     result = await db.execute(query)
-    sessions = result.scalars().all()
-    return [
-        SessionResponse(
-            id=s.id,
-            device_id=s.device_id,
-            student_id=s.student_id,
-            started_at=s.started_at.isoformat(),
-            ended_at=s.ended_at.isoformat(),
-            duration_seconds=s.duration_seconds,
-            total_notes=s.total_notes,
-            events=s.events,
-            created_at=s.created_at
-        ) for s in sessions
-    ]
+    return [_session_to_response(s) for s in result.scalars().all()]
 
 @router.get("/sessions/{session_id}", response_model=SessionResponse)
 async def get_session(session_id: int, db: AsyncSession = Depends(get_db)):
@@ -145,17 +137,7 @@ async def get_session(session_id: int, db: AsyncSession = Depends(get_db)):
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    return SessionResponse(
-        id=session.id,
-        device_id=session.device_id,
-        student_id=session.student_id,
-        started_at=session.started_at.isoformat(),
-        ended_at=session.ended_at.isoformat(),
-        duration_seconds=session.duration_seconds,
-        total_notes=session.total_notes,
-        events=session.events,
-        created_at=session.created_at
-    )
+    return _session_to_response(session)
 
 
 @router.delete("/sessions/{session_id}", status_code=204)

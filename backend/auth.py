@@ -13,7 +13,11 @@ from database import get_db
 from models import User
 from schemas import TokenData
 
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-in-production")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    import warnings
+    warnings.warn("SECRET_KEY not set — using insecure default. Set SECRET_KEY in .env for production!", stacklevel=2)
+    SECRET_KEY = "dev-secret-DO-NOT-USE-IN-PRODUCTION"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7
 

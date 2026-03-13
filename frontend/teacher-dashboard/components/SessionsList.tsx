@@ -46,6 +46,14 @@ const DATE_FILTERS = [
 ] as const;
 type DateFilter = (typeof DATE_FILTERS)[number]["value"];
 
+const CHART_TOOLTIP_STYLE = {
+  background: "#1A1D27",
+  border: "1px solid #333",
+  borderRadius: 8,
+  color: "#fff",
+  fontSize: 12,
+} as const;
+
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
 function formatDate(iso: string) {
@@ -145,14 +153,9 @@ async function ensurePiano() {
   const Tone: any = _tone ?? (await import("tone"));
   _tone = Tone;
 
-  // Resume AudioContext — must happen synchronously from user gesture
   await Tone.start();
   const ctx = Tone.getContext();
-  if (ctx.state !== "running") {
-    console.warn("AudioContext state after Tone.start():", ctx.state, "— forcing resume");
-    await ctx.resume();
-  }
-  console.log("AudioContext state:", ctx.state, "sampleRate:", ctx.sampleRate);
+  if (ctx.state !== "running") await ctx.resume();
 
   if (_instrument) return { tone: Tone, instrument: _instrument, type: _instType! };
 
@@ -162,14 +165,10 @@ async function ensurePiano() {
   }
 
   _loadPromise = (async () => {
-    console.log("Attempting to load piano from:", SALAMANDER_BASE);
-
     try {
       const sampler = new Tone.Sampler({
         urls: SALAMANDER_URLS,
         baseUrl: SALAMANDER_BASE,
-        onload: () => console.log("Sampler onload — all samples decoded"),
-        onerror: (e: unknown) => console.error("Sampler onerror:", e),
       }).toDestination();
 
       await Promise.race([
@@ -185,7 +184,6 @@ async function ensurePiano() {
       sampler.volume.value = 3;
       _instrument = sampler;
       _instType = "sampler";
-      console.log("Salamander piano sampler loaded successfully");
     } catch (err) {
       console.warn("Sampler failed, falling back to PolySynth:", err);
       _initFallbackSynth(Tone);
@@ -195,7 +193,7 @@ async function ensurePiano() {
   try {
     await _loadPromise;
   } catch (err) {
-    console.error("ensurePiano rejected, forcing synth fallback:", err);
+    console.warn("ensurePiano rejected, forcing synth fallback:", err);
     _loadPromise = null;
     if (!_instrument) _initFallbackSynth(Tone);
   }
@@ -559,15 +557,7 @@ function SessionRow({
                       tickLine={false}
                       allowDecimals={false}
                     />
-                    <Tooltip
-                      contentStyle={{
-                        background: "#1A1D27",
-                        border: "1px solid #333",
-                        borderRadius: 8,
-                        color: "#fff",
-                        fontSize: 12,
-                      }}
-                    />
+                    <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
                     <Bar dataKey="count" fill="#6C63FF" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -597,15 +587,7 @@ function SessionRow({
                       axisLine={false}
                       tickLine={false}
                     />
-                    <Tooltip
-                      contentStyle={{
-                        background: "#1A1D27",
-                        border: "1px solid #333",
-                        borderRadius: 8,
-                        color: "#fff",
-                        fontSize: 12,
-                      }}
-                    />
+                    <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
                     <Line
                       type="monotone"
                       dataKey="velocity"
@@ -746,11 +728,6 @@ export function SessionsList({ studentId }: Props) {
             (e.type === "note_on" && e.velocity === 0)
         );
 
-        console.log(
-          `[Playback] Scheduling ${ons.length} notes, session duration ${durationSec}s`
-        );
-
-        let noteIdx = 0;
         for (const evt of ons) {
           const timeSec = evt.time_offset_ms / 1000;
           const offEvt = offs.find(
@@ -765,13 +742,7 @@ export function SessionsList({ studentId }: Props) {
             : 0.3;
           const vel = Math.min(1, Math.max(0.3, (evt.velocity / 127) * 1.5));
 
-          const idx = noteIdx++;
           transport.schedule((audioTime: number) => {
-            if (idx < 5) {
-              console.log(
-                `[Note ${idx}] ${evt.note} vel=${vel.toFixed(2)} dur=${dur.toFixed(2)}s @${audioTime.toFixed(3)}`
-              );
-            }
             instrument.triggerAttackRelease(evt.note, dur, audioTime, vel);
           }, timeSec);
         }
@@ -782,7 +753,6 @@ export function SessionsList({ studentId }: Props) {
 
         transport.schedule((audioTime: number) => {
           tone.Draw.schedule(() => {
-            console.log("[Playback] Complete");
             setPlayingId(null);
             setPlaybackTotalSec(0);
           }, audioTime);
@@ -795,9 +765,7 @@ export function SessionsList({ studentId }: Props) {
         setPlaybackTotalSec(totalSec);
 
         transport.start();
-        console.log("[Playback] Transport started, state:", transport.state);
       } catch (err) {
-        console.error("[Playback] Error:", err);
         setPianoError(
           err instanceof Error ? err.message : "Playback failed"
         );

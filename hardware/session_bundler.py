@@ -10,7 +10,7 @@ import mido
 import sys
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 import requests
 
@@ -22,7 +22,7 @@ API_ENDPOINT = os.getenv(
     "https://piano-tracker-api-production-d7b7.up.railway.app/sessions",
 )
 
-DEVICE_ID = os.environ.get("DEVICE_ID", "pi-001")
+DEVICE_ID = os.environ.get("DEVICE_ID", "keysight-pi")
 FAILED_SESSIONS_PATH = os.path.join(os.path.dirname(__file__), "failed_sessions.jsonl")
 
 def note_number_to_name(note: int) -> str:
@@ -121,7 +121,7 @@ def bundle_session(port_name: str):
                     if session is None:
                         # Start new session
                         session = {}
-                        start_datetime = datetime.now()
+                        start_datetime = datetime.now(timezone.utc)
                         total_time = 0.0
                         events = []
                         total_notes = 0
@@ -151,11 +151,11 @@ def bundle_session(port_name: str):
                     if time.time() - last_msg_time > 300:  # 5 minutes of silence
                         if session and total_notes > 0:
                             # End session
-                            ended_at = datetime.now()
+                            ended_at = datetime.now(timezone.utc)
                             session.update({
                                 "device_id": DEVICE_ID,
-                                "started_at": start_datetime.isoformat(),
-                                "ended_at": ended_at.isoformat(),
+                                "started_at": start_datetime.isoformat().replace("+00:00", "Z"),
+                                "ended_at": ended_at.isoformat().replace("+00:00", "Z"),
                                 "duration_seconds": int((ended_at - start_datetime).total_seconds()),
                                 "total_notes": total_notes,
                                 "events": events
@@ -174,11 +174,11 @@ def bundle_session(port_name: str):
                         total_notes = 0
         except KeyboardInterrupt:
             if session and total_notes > 0:
-                ended_at = datetime.now()
+                ended_at = datetime.now(timezone.utc)
                 session.update({
                     "device_id": DEVICE_ID,
-                    "started_at": start_datetime.isoformat(),
-                    "ended_at": ended_at.isoformat(),
+                    "started_at": start_datetime.isoformat().replace("+00:00", "Z"),
+                    "ended_at": ended_at.isoformat().replace("+00:00", "Z"),
                     "duration_seconds": int((ended_at - start_datetime).total_seconds()),
                     "total_notes": total_notes,
                     "events": events

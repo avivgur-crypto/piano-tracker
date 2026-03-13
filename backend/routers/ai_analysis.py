@@ -371,7 +371,7 @@ async def analyze_session(
         )
 
     ai_report = AIReport(
-        session_id=payload.session_id,
+        session_id=session.id,
         student_id=payload.student_id,
         teacher_report=teacher_report,
         student_report=student_report,

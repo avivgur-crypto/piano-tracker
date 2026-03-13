@@ -59,8 +59,6 @@ export function CommunicationHub() {
         deadline: hwDeadline ? new Date(hwDeadline).toISOString() : null,
       };
 
-      console.log("[homework] sending", payload);
-
       const res = await fetch(`${API_URL}/communication/homework`, {
         method: "POST",
         headers: {
@@ -69,7 +67,6 @@ export function CommunicationHub() {
         },
         body: JSON.stringify(payload),
       });
-      console.log("[homework] response", res.status);
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));

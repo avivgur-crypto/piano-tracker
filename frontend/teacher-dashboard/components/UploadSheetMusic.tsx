@@ -56,10 +56,6 @@ export function UploadSheetMusic({ studentId }: Props) {
           { headers: { Authorization: `Bearer ${token}` } }
         );
         if (!res.ok) {
-          const text = await res.text();
-          if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
-            console.warn("[UploadSheetMusic] GET pieces failed", res.status, text?.slice(0, 200));
-          }
           throw new Error("Failed to load pieces");
         }
         const data: PieceItem[] = await res.json();
@@ -149,7 +145,6 @@ export function UploadSheetMusic({ studentId }: Props) {
   };
 
   const handleDelete = async (pieceId: number) => {
-    console.log("[delete] clicking delete for piece:", pieceId);
     const token = getToken();
     if (!token) {
       setError("No authentication token found.");
@@ -160,9 +155,8 @@ export function UploadSheetMusic({ studentId }: Props) {
     try {
       const res = await fetch(`${API_URL}/ai/pieces/${pieceId}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${getToken()}` },
+        headers: { Authorization: `Bearer ${token}` },
       });
-      console.log("[delete] response status:", res.status);
       if (!res.ok) {
         const text = await res.text();
         const data = (() => {
@@ -172,18 +166,10 @@ export function UploadSheetMusic({ studentId }: Props) {
             return {};
           }
         })();
-        if (process.env.NODE_ENV === "development") {
-          console.warn("[UploadSheetMusic] Delete failed", res.status, text?.slice(0, 300));
-        }
         throw new Error(typeof data?.detail === "string" ? data.detail : "Failed to delete piece");
       }
-      console.log("[delete] calling fetchPieces");
       await fetchPieces();
-      console.log("[delete] fetchPieces done, pieces state:", pieces);
     } catch (err) {
-      if (process.env.NODE_ENV === "development") {
-        console.warn("[UploadSheetMusic] Delete error", err);
-      }
       setError(err instanceof Error ? err.message : "Failed to delete piece");
     } finally {
       setDeletingId(null);

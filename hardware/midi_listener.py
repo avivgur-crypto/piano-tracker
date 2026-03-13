@@ -77,7 +77,7 @@ API_URL = os.environ.get("API_URL", "http://localhost:8000")
 DEVICE_ID = os.environ.get("DEVICE_ID", "keysight-pi")
 STUDENT_ID = int(os.environ.get("STUDENT_ID", "2"))
 # Session is uploaded to the server after this many seconds with no new notes (or on Ctrl+C).
-# Use the same API_URL as the teacher dashboard (e.g. http://localhost:8000 when testing locally).
+# Production: set API_URL to your Railway URL (e.g. https://your-app.up.railway.app).
 SILENCE_TIMEOUT = 5  # seconds of silence before session auto-ends
 
 
@@ -112,7 +112,6 @@ def _send_session(events, session_start, session_end, total_notes):
     student_id, piece_id = _cached_active[0], _cached_active[1]
     if student_id is None:
         student_id = STUDENT_ID
-        piece_id = piece_id  # keep None
         print("\n⚠️ No active session cached — using default STUDENT_ID. Start practicing from the app first.")
     else:
         print(f"\n📤 Sending session (student_id={student_id}, piece_id={piece_id})…")
@@ -179,7 +178,7 @@ def listen(port_name: str):
         silence_timer = threading.Timer(SILENCE_TIMEOUT, _on_silence)
         silence_timer.daemon = True
         silence_timer.start()
-        print(f"    [debug] Silence timer started ({SILENCE_TIMEOUT}s)")
+        
 
     try:
         with mido.open_input(port_name) as inport:
@@ -262,6 +261,9 @@ def listen(port_name: str):
 def main():
     print("=" * 65)
     print("  🎹  Frictionless Piano Tracker — MIDI Listener (Phase 1 POC)")
+    print("=" * 65)
+    print(f"  API_URL  = {API_URL}")
+    print(f"  DEVICE_ID = {DEVICE_ID} (GET /sessions/active/{{device_id}} must match student app)")
     print("=" * 65)
 
     ports = list_ports()

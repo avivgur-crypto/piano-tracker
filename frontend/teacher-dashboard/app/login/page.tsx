@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { API_URL } from "../../lib/api";
 import { saveAuth } from "../../lib/auth";
@@ -23,21 +22,16 @@ export default function LoginPage() {
       formData.append("username", email);
       formData.append("password", password);
 
-      console.log("[login] submitting", { email, password });
-
       const res = await fetch(`${API_URL}/auth/login`, {
         method: "POST",
         body: formData,
       });
-
-      console.log("[login] response", res.status);
 
       if (!res.ok) {
         throw new Error("Invalid email or password");
       }
 
       const data = await res.json();
-      console.log("[login] success", data);
 
       saveAuth(data.access_token, data.user, rememberMe);
 
@@ -51,8 +45,7 @@ export default function LoginPage() {
 
       await new Promise((resolve) => setTimeout(resolve, 100));
       window.location.href = from;
-    } catch (err) {
-      console.log("[login] error", err);
+    } catch {
       setError("Invalid email or password");
     } finally {
       setLoading(false);

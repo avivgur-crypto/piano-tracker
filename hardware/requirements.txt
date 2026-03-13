@@ -1,1 +1,3 @@
 requests
+mido
+python-rtmidi
