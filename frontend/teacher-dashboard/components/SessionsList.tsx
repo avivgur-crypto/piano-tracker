@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronUp,
@@ -54,6 +54,12 @@ function formatDuration(seconds: number) {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${m}m ${s}s`;
+}
+
+function fmtMmSs(sec: number) {
+  const m = Math.floor(Math.max(0, sec) / 60);
+  const s = Math.floor(Math.max(0, sec) % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 function pieceName(pieceId: number | null, pieces: Piece[]) {
@@ -115,6 +121,7 @@ function _initFallbackSynth(Tone: any) {
     oscillator: { type: "triangle" },
     envelope: { attack: 0.005, decay: 0.3, sustain: 0.2, release: 1.0 },
   });
+  synth.volume.value = 3;
   _instrument = synth;
   _instType = "synth";
 }
@@ -127,7 +134,15 @@ async function ensurePiano() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const Tone: any = _tone ?? (await import("tone"));
   _tone = Tone;
+
+  // Resume AudioContext — must happen synchronously from user gesture
   await Tone.start();
+  const ctx = Tone.getContext();
+  if (ctx.state !== "running") {
+    console.warn("AudioContext state after Tone.start():", ctx.state, "— forcing resume");
+    await ctx.resume();
+  }
+  console.log("AudioContext state:", ctx.state, "sampleRate:", ctx.sampleRate);
 
   if (_instrument) return { tone: Tone, instrument: _instrument, type: _instType! };
 
@@ -138,23 +153,26 @@ async function ensurePiano() {
 
   _loadPromise = (async () => {
     console.log("Attempting to load piano from:", SALAMANDER_BASE);
-    console.log("Sample URLs:", SALAMANDER_URLS);
 
     try {
       const sampler = new Tone.Sampler({
         urls: SALAMANDER_URLS,
         baseUrl: SALAMANDER_BASE,
-        onload: () => console.log("Sampler onload fired — all samples decoded"),
+        onload: () => console.log("Sampler onload — all samples decoded"),
         onerror: (e: unknown) => console.error("Sampler onerror:", e),
       }).toDestination();
 
       await Promise.race([
         Tone.loaded(),
         new Promise<never>((_, rej) =>
-          setTimeout(() => rej(new Error("Sampler load timed out after " + LOAD_TIMEOUT_MS + "ms")), LOAD_TIMEOUT_MS)
+          setTimeout(
+            () => rej(new Error("Sampler load timed out after " + LOAD_TIMEOUT_MS + "ms")),
+            LOAD_TIMEOUT_MS
+          )
         ),
       ]);
 
+      sampler.volume.value = 3;
       _instrument = sampler;
       _instType = "sampler";
       console.log("Salamander piano sampler loaded successfully");
@@ -167,7 +185,7 @@ async function ensurePiano() {
   try {
     await _loadPromise;
   } catch (err) {
-    console.error("ensurePiano load promise rejected, forcing synth fallback:", err);
+    console.error("ensurePiano rejected, forcing synth fallback:", err);
     _loadPromise = null;
     if (!_instrument) _initFallbackSynth(Tone);
   }
@@ -181,7 +199,57 @@ function haltPlayback() {
   const transport = _tone.getTransport();
   transport.stop();
   transport.cancel();
+  transport.seconds = 0;
   _instrument?.releaseAll?.();
+}
+
+/* ── ProgressBar (rAF-driven, no React re-renders) ──────────────────────── */
+
+function ProgressBar({ totalSec }: { totalSec: number }) {
+  const fillRef = useRef<HTMLDivElement>(null);
+  const textRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    let raf: number;
+    const tick = () => {
+      if (_tone && fillRef.current && textRef.current) {
+        const sec = _tone.getTransport().seconds;
+        const pct = totalSec > 0 ? Math.min(100, (sec / totalSec) * 100) : 0;
+        fillRef.current.style.width = `${pct}%`;
+        textRef.current.textContent = `${fmtMmSs(sec)} / ${fmtMmSs(totalSec)}`;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [totalSec]);
+
+  return (
+    <div className="mt-3 flex items-center gap-3">
+      {/* Pulsing "now playing" dot */}
+      <span className="relative flex h-2.5 w-2.5 shrink-0">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#6C63FF] opacity-75" />
+        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#6C63FF]" />
+      </span>
+
+      {/* Bar */}
+      <div className="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden">
+        <div
+          ref={fillRef}
+          className="h-full rounded-full bg-gradient-to-r from-[#6C63FF] to-[#a78bfa]"
+          style={{ width: "0%", transition: "width 80ms linear" }}
+        />
+      </div>
+
+      {/* Time */}
+      <span
+        ref={textRef}
+        className="shrink-0 text-xs font-mono tabular-nums text-zinc-400 whitespace-nowrap"
+      >
+        0:00 / {fmtMmSs(totalSec)}
+      </span>
+    </div>
+  );
 }
 
 /* ── SessionRow ──────────────────────────────────────────────────────────── */
@@ -191,6 +259,7 @@ function SessionRow({
   pieces,
   report,
   playbackState,
+  playbackTotalSec,
   anyLoading,
   onPlay,
   onStop,
@@ -199,8 +268,9 @@ function SessionRow({
   pieces: Piece[];
   report: AIReport | undefined;
   playbackState: "idle" | "loading" | "playing";
+  playbackTotalSec: number;
   anyLoading: boolean;
-  onPlay: (sessionId: number, events: SessionEvent[]) => void;
+  onPlay: (sessionId: number, events: SessionEvent[], durationSec: number) => void;
   onStop: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -244,11 +314,12 @@ function SessionRow({
 
       {open && (
         <div className="space-y-6 border-t border-white/10 px-5 py-5">
-          {/* Playback */}
+          {/* ── Playback controls ── */}
           <div>
             <h4 className="mb-2 text-sm font-semibold text-zinc-300">
               MIDI Playback
             </h4>
+
             {playbackState === "loading" ? (
               <button
                 disabled
@@ -265,16 +336,23 @@ function SessionRow({
               </button>
             ) : (
               <button
-                onClick={() => onPlay(session.id, session.events)}
+                onClick={() =>
+                  onPlay(session.id, session.events, session.duration_seconds)
+                }
                 disabled={anyLoading}
                 className="flex items-center gap-2 rounded-lg bg-[#6C63FF] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#5a52e0] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Play className="h-4 w-4" /> Play
               </button>
             )}
+
+            {/* Progress bar — only visible while playing */}
+            {playbackState === "playing" && playbackTotalSec > 0 && (
+              <ProgressBar totalSec={playbackTotalSec} />
+            )}
           </div>
 
-          {/* Note distribution */}
+          {/* ── Note distribution ── */}
           {noteDist.length > 0 && (
             <div>
               <h4 className="mb-2 text-sm font-semibold text-zinc-300">
@@ -311,7 +389,7 @@ function SessionRow({
             </div>
           )}
 
-          {/* Velocity timeline */}
+          {/* ── Velocity timeline ── */}
           {velTimeline.length > 0 && (
             <div>
               <h4 className="mb-2 text-sm font-semibold text-zinc-300">
@@ -355,7 +433,7 @@ function SessionRow({
             </div>
           )}
 
-          {/* AI Report link */}
+          {/* ── AI Report link ── */}
           {report && (
             <button
               onClick={() => {
@@ -388,6 +466,7 @@ export function SessionsList({ studentId }: Props) {
 
   const [playingId, setPlayingId] = useState<number | null>(null);
   const [loadingPlayId, setLoadingPlayId] = useState<number | null>(null);
+  const [playbackTotalSec, setPlaybackTotalSec] = useState(0);
 
   /* ── Fetch data ── */
 
@@ -418,9 +497,9 @@ export function SessionsList({ studentId }: Props) {
     fetchAll();
   }, [fetchAll]);
 
-  /* ── Pre-load piano (user-triggered) ── */
+  /* ── Enable Audio (user-triggered preload) ── */
 
-  const handlePreload = useCallback(async () => {
+  const handleEnableAudio = useCallback(async () => {
     setPianoLoading(true);
     setPianoError(null);
     try {
@@ -438,17 +517,16 @@ export function SessionsList({ studentId }: Props) {
   /* ── Transport-scheduled playback ── */
 
   const handlePlay = useCallback(
-    async (sessionId: number, events: SessionEvent[]) => {
+    async (sessionId: number, events: SessionEvent[], durationSec: number) => {
       haltPlayback();
       setPlayingId(null);
+      setPlaybackTotalSec(0);
       setLoadingPlayId(sessionId);
+      setPianoError(null);
 
       try {
         const { tone, instrument } = await ensurePiano();
         setPianoReady(true);
-
-        setLoadingPlayId(null);
-        setPlayingId(sessionId);
 
         const transport = tone.getTransport();
         transport.cancel();
@@ -462,6 +540,11 @@ export function SessionsList({ studentId }: Props) {
             (e.type === "note_on" && e.velocity === 0)
         );
 
+        console.log(
+          `[Playback] Scheduling ${ons.length} notes, session duration ${durationSec}s`
+        );
+
+        let noteIdx = 0;
         for (const evt of ons) {
           const timeSec = evt.time_offset_ms / 1000;
           const offEvt = offs.find(
@@ -474,26 +557,45 @@ export function SessionsList({ studentId }: Props) {
                 (offEvt.time_offset_ms - evt.time_offset_ms) / 1000
               )
             : 0.3;
-          const vel = evt.velocity / 127;
+          const vel = Math.min(1, Math.max(0.3, (evt.velocity / 127) * 1.5));
 
+          const idx = noteIdx++;
           transport.schedule((audioTime: number) => {
+            if (idx < 5) {
+              console.log(
+                `[Note ${idx}] ${evt.note} vel=${vel.toFixed(2)} dur=${dur.toFixed(2)}s @${audioTime.toFixed(3)}`
+              );
+            }
             instrument.triggerAttackRelease(evt.note, dur, audioTime, vel);
           }, timeSec);
         }
 
         const lastMs =
           ons.length > 0 ? ons[ons.length - 1].time_offset_ms : 0;
+        const totalSec = Math.max(lastMs / 1000, durationSec);
+
         transport.schedule((audioTime: number) => {
           tone.Draw.schedule(() => {
+            console.log("[Playback] Complete");
             setPlayingId(null);
+            setPlaybackTotalSec(0);
           }, audioTime);
-        }, lastMs / 1000 + 1.5);
+        }, totalSec + 1.5);
+
+        setLoadingPlayId(null);
+        setPlayingId(sessionId);
+        setPlaybackTotalSec(totalSec);
 
         transport.start();
+        console.log("[Playback] Transport started, state:", transport.state);
       } catch (err) {
-        console.error("Playback error:", err);
+        console.error("[Playback] Error:", err);
+        setPianoError(
+          err instanceof Error ? err.message : "Playback failed"
+        );
         setLoadingPlayId(null);
         setPlayingId(null);
+        setPlaybackTotalSec(0);
       }
     },
     []
@@ -503,6 +605,7 @@ export function SessionsList({ studentId }: Props) {
     haltPlayback();
     setPlayingId(null);
     setLoadingPlayId(null);
+    setPlaybackTotalSec(0);
   }, []);
 
   /* ── Cleanup on unmount ── */
@@ -520,29 +623,28 @@ export function SessionsList({ studentId }: Props) {
 
   return (
     <section className="rounded-2xl bg-[#1A1D27] p-6 shadow-xl">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-white">🎹 Sessions</h2>
+      <h2 className="mb-4 text-lg font-semibold text-white">🎹 Sessions</h2>
 
-        {sessions.length > 0 && !pianoReady && (
-          <button
-            onClick={handlePreload}
-            disabled={pianoLoading}
-            className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-zinc-300 transition hover:bg-white/10 disabled:opacity-60"
-          >
-            {pianoLoading ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Loading piano…
-              </>
-            ) : (
-              <>
-                <Volume2 className="h-3.5 w-3.5" />
-                Load Piano
-              </>
-            )}
-          </button>
-        )}
-      </div>
+      {/* ── Enable Audio banner ── */}
+      {sessions.length > 0 && !pianoReady && (
+        <button
+          onClick={handleEnableAudio}
+          disabled={pianoLoading}
+          className="mb-4 flex w-full items-center justify-center gap-2 rounded-xl border border-[#6C63FF]/30 bg-[#6C63FF]/10 px-4 py-3 text-sm font-medium text-[#6C63FF] transition hover:bg-[#6C63FF]/20 disabled:opacity-60"
+        >
+          {pianoLoading ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading piano samples…
+            </>
+          ) : (
+            <>
+              <Volume2 className="h-4 w-4" />
+              Click to enable audio playback
+            </>
+          )}
+        </button>
+      )}
 
       {pianoError && (
         <p className="mb-3 rounded-lg bg-rose-500/15 px-3 py-2 text-sm text-rose-200">
@@ -576,6 +678,9 @@ export function SessionsList({ studentId }: Props) {
                 pieces={pieces}
                 report={reportBySession.get(s.id)}
                 playbackState={pbState}
+                playbackTotalSec={
+                  playingId === s.id ? playbackTotalSec : 0
+                }
                 anyLoading={anyLoading}
                 onPlay={handlePlay}
                 onStop={handleStop}
