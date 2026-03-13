@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, Pause, Play } from "lucide-react";
 import {
   BarChart,
   Bar,
@@ -88,7 +88,7 @@ const PIANO_SAMPLER_URLS: Record<string, string> = {
   A7: "A7.mp3", C8: "C8.mp3",
 };
 const PIANO_SAMPLER_BASE_URL =
-  "https://gleitz.github.io/midi-js-soundfonts/MusyngKite/acoustic_grand_piano-mp3/";
+  "https://tonejs.github.io/audio/salamander/";
 
 function SessionRow({
   session,
@@ -108,45 +108,51 @@ function SessionRow({
   const stopRef = useRef(false);
 
   const handlePlay = async () => {
-    const Tone = await import("tone");
-    await Tone.start();
+    try {
+      const Tone = await import("tone");
+      await Tone.start();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sampler = samplerRef.current as any;
-    if (!sampler) return;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sampler = samplerRef.current as any;
+      if (!sampler) return;
 
-    stopRef.current = false;
-    setPlaying(true);
+      stopRef.current = false;
+      setPlaying(true);
 
-    const ons = noteOnEvents(session.events);
-    const offs = session.events.filter(
-      (e) => e.type === "note_off" || (e.type === "note_on" && e.velocity === 0)
-    );
-
-    for (const evt of ons) {
-      if (stopRef.current) break;
-
-      const offEvt = offs.find(
-        (o) => o.note === evt.note && o.time_offset_ms > evt.time_offset_ms
+      const ons = noteOnEvents(session.events);
+      const offs = session.events.filter(
+        (e) =>
+          e.type === "note_off" ||
+          (e.type === "note_on" && e.velocity === 0)
       );
-      const dur = offEvt
-        ? Math.max(0.05, (offEvt.time_offset_ms - evt.time_offset_ms) / 1000)
-        : 0.3;
-      const vel = evt.velocity / 127;
 
-      sampler.triggerAttackRelease(evt.note, dur, undefined, vel);
+      for (let i = 0; i < ons.length; i++) {
+        if (stopRef.current) break;
 
-      const idx = ons.indexOf(evt);
-      const nextOn = ons[idx + 1];
-      if (nextOn) {
-        const gap = (nextOn.time_offset_ms - evt.time_offset_ms) / 1000;
-        if (gap > 0) {
-          await new Promise<void>((r) => setTimeout(r, gap * 1000));
+        const evt = ons[i];
+        const offEvt = offs.find(
+          (o) => o.note === evt.note && o.time_offset_ms > evt.time_offset_ms
+        );
+        const dur = offEvt
+          ? Math.max(0.05, (offEvt.time_offset_ms - evt.time_offset_ms) / 1000)
+          : 0.3;
+        const vel = evt.velocity / 127;
+
+        sampler.triggerAttackRelease(evt.note, dur, undefined, vel);
+
+        const nextOn = ons[i + 1];
+        if (nextOn) {
+          const gap = (nextOn.time_offset_ms - evt.time_offset_ms) / 1000;
+          if (gap > 0) {
+            await new Promise<void>((r) => setTimeout(r, gap * 1000));
+          }
         }
       }
+    } catch (err) {
+      console.error("MIDI playback error:", err);
+    } finally {
+      setPlaying(false);
     }
-
-    setPlaying(false);
   };
 
   const handleStop = () => {
@@ -208,17 +214,17 @@ function SessionRow({
             {playing ? (
               <button
                 onClick={handleStop}
-                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-500"
+                className="flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-500"
               >
-                ⏹ Stop
+                <Pause className="h-4 w-4" /> Pause
               </button>
             ) : (
               <button
                 onClick={handlePlay}
                 disabled={!samplerReady}
-                className="rounded-lg bg-[#6C63FF] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#5a52e0] disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex items-center gap-2 rounded-lg bg-[#6C63FF] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#5a52e0] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                ▶ Play
+                <Play className="h-4 w-4" /> Play
               </button>
             )}
           </div>
