@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { API_URL } from "../lib/api";
 import { getStudentId, getStudentToken } from "../lib/auth";
+import { cleanKeySignature } from "../lib/music";
 
 type PieceItem = {
   id: number;
@@ -73,18 +75,23 @@ export function MyPieces() {
       ) : (
         <ul className="mt-4 divide-y divide-white/5">
           {pieces.map((piece) => (
-            <li key={piece.id} className="flex items-center justify-between py-2.5 first:pt-0">
-              <span className="font-medium text-white">{piece.title}</span>
-              <span className="text-sm text-[#8B92B0]">
-                {[
-                  piece.score_summary?.key_signature,
-                  piece.score_summary?.measure_count != null
-                    ? `${piece.score_summary.measure_count} msr`
-                    : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ") || "—"}
-              </span>
+            <li key={piece.id} className="first:pt-0">
+              <Link
+                href={`/pieces/${piece.id}`}
+                className="flex items-center justify-between py-2.5 rounded-lg px-2 -mx-2 transition hover:bg-white/5"
+              >
+                <span className="font-medium text-white">{piece.title}</span>
+                <span className="text-sm text-[#8B92B0]">
+                  {[
+                    cleanKeySignature(piece.score_summary?.key_signature),
+                    piece.score_summary?.measure_count != null
+                      ? `${piece.score_summary.measure_count} msr`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || "—"}
+                </span>
+              </Link>
             </li>
           ))}
         </ul>
