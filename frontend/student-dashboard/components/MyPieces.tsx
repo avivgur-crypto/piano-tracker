@@ -73,24 +73,29 @@ export function MyPieces() {
       ) : pieces.length === 0 ? (
         <p className="mt-4 text-sm text-[#B0B7D6]">No pieces assigned yet.</p>
       ) : (
-        <ul className="mt-4 divide-y divide-white/5">
+        <ul className="mt-4 space-y-1">
           {pieces.map((piece) => (
-            <li key={piece.id} className="first:pt-0">
+            <li key={piece.id}>
               <Link
                 href={`/pieces/${piece.id}`}
-                className="flex items-center justify-between py-2.5 rounded-lg px-2 -mx-2 transition hover:bg-white/5"
+                className="group flex cursor-pointer items-center justify-between rounded-xl border border-transparent px-4 py-3 transition hover:border-[#58CC02]/30 hover:bg-[#58CC02]/5"
               >
-                <span className="font-medium text-white">{piece.title}</span>
-                <span className="text-sm text-[#8B92B0]">
-                  {[
-                    cleanKeySignature(piece.score_summary?.key_signature),
-                    piece.score_summary?.measure_count != null
-                      ? `${piece.score_summary.measure_count} msr`
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ") || "—"}
-                </span>
+                <div className="min-w-0 flex-1">
+                  <span className="font-medium text-white group-hover:text-[#A3FFB5] transition">
+                    {piece.title}
+                  </span>
+                  <span className="ml-3 text-sm text-[#8B92B0]">
+                    {[
+                      cleanKeySignature(piece.score_summary?.key_signature),
+                      piece.score_summary?.measure_count != null
+                        ? `${piece.score_summary.measure_count} msr`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ") || "—"}
+                  </span>
+                </div>
+                <span className="ml-2 text-[#8B92B0] transition group-hover:text-[#58CC02]">›</span>
               </Link>
             </li>
           ))}
