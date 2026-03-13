@@ -1,9 +1,12 @@
+import asyncio
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routers import ai_analysis
 from routers import auth as auth_router
 from routers import communication
 from routers import sessions
+from routers.sessions import periodic_cleanup
 from dotenv import load_dotenv
 
 from database import engine
@@ -30,6 +33,7 @@ app.add_middleware(
 async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    asyncio.create_task(periodic_cleanup())
 
 @app.get("/health")
 async def health():

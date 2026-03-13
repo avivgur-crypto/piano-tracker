@@ -3,13 +3,14 @@ import traceback
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from database import get_db
-from models import Session as DBSession
+from database import get_db, async_session
+from models import Session as DBSession, AIReport as DBAIReport
 from schemas import SessionCreate, SessionResponse
 from typing import Dict, List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -96,10 +97,30 @@ async def create_session(session: SessionCreate, db: AsyncSession = Depends(get_
         raise
 
 @router.get("/sessions", response_model=List[SessionResponse])
-async def list_sessions(student_id: Optional[int] = None, db: AsyncSession = Depends(get_db)):
+async def list_sessions(
+    student_id: Optional[int] = None,
+    date_range: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
     query = select(DBSession)
     if student_id is not None:
         query = query.where(DBSession.student_id == student_id)
+
+    if date_range:
+        now = datetime.utcnow()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        if date_range == "today":
+            query = query.where(DBSession.started_at >= today_start)
+        elif date_range == "yesterday":
+            yesterday_start = today_start - timedelta(days=1)
+            query = query.where(
+                DBSession.started_at >= yesterday_start,
+                DBSession.started_at < today_start,
+            )
+        elif date_range == "last_week":
+            week_ago = today_start - timedelta(days=7)
+            query = query.where(DBSession.started_at >= week_ago)
+
     query = query.order_by(DBSession.created_at.desc())
     result = await db.execute(query)
     sessions = result.scalars().all()
@@ -134,3 +155,70 @@ async def get_session(session_id: int, db: AsyncSession = Depends(get_db)):
         events=session.events,
         created_at=session.created_at
     )
+
+
+@router.delete("/sessions/{session_id}", status_code=204)
+async def delete_session(session_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(DBSession).where(DBSession.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    await db.execute(
+        sa_delete(DBAIReport).where(DBAIReport.session_id == session_id)
+    )
+    await db.delete(session)
+    await db.commit()
+
+
+# ── Auto-cleanup: delete sessions older than 7 days ──────────────────────────
+# Runs as a background asyncio task started from main.py on_event("startup").
+# For production, consider a dedicated cron job instead:
+#   curl -X POST https://your-api/sessions/cleanup
+CLEANUP_INTERVAL_HOURS = 24
+RETENTION_DAYS = 7
+
+
+@router.post("/sessions/cleanup", status_code=200)
+async def cleanup_old_sessions(db: AsyncSession = Depends(get_db)):
+    """Manual trigger: delete sessions (and their AI reports) older than RETENTION_DAYS."""
+    cutoff = datetime.utcnow() - timedelta(days=RETENTION_DAYS)
+    result = await db.execute(
+        select(DBSession.id).where(DBSession.started_at < cutoff)
+    )
+    old_ids = [row[0] for row in result.all()]
+    if not old_ids:
+        return {"deleted": 0}
+    await db.execute(sa_delete(DBAIReport).where(DBAIReport.session_id.in_(old_ids)))
+    await db.execute(sa_delete(DBSession).where(DBSession.id.in_(old_ids)))
+    await db.commit()
+    logger.info(f"Cleanup: deleted {len(old_ids)} sessions older than {RETENTION_DAYS} days")
+    return {"deleted": len(old_ids)}
+
+
+async def periodic_cleanup():
+    """Background loop that auto-deletes stale sessions every CLEANUP_INTERVAL_HOURS."""
+    import asyncio
+    while True:
+        await asyncio.sleep(CLEANUP_INTERVAL_HOURS * 3600)
+        try:
+            async with async_session() as db:
+                cutoff = datetime.utcnow() - timedelta(days=RETENTION_DAYS)
+                result = await db.execute(
+                    select(DBSession.id).where(DBSession.started_at < cutoff)
+                )
+                old_ids = [row[0] for row in result.all()]
+                if not old_ids:
+                    continue
+                await db.execute(
+                    sa_delete(DBAIReport).where(DBAIReport.session_id.in_(old_ids))
+                )
+                await db.execute(
+                    sa_delete(DBSession).where(DBSession.id.in_(old_ids))
+                )
+                await db.commit()
+                logger.info(
+                    f"Auto-cleanup: deleted {len(old_ids)} sessions older than {RETENTION_DAYS} days"
+                )
+        except Exception as e:
+            logger.error(f"Auto-cleanup error: {e}")
