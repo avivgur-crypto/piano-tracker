@@ -76,6 +76,8 @@ def pick_port(ports: list) -> str:
 API_URL = os.environ.get("API_URL", "http://localhost:8000")
 DEVICE_ID = os.environ.get("DEVICE_ID", "keysight-pi")
 STUDENT_ID = int(os.environ.get("STUDENT_ID", "2"))
+# Session is uploaded to the server after this many seconds with no new notes (or on Ctrl+C).
+# Use the same API_URL as the teacher dashboard (e.g. http://localhost:8000 when testing locally).
 SILENCE_TIMEOUT = 5  # seconds of silence before session auto-ends
 
 
@@ -89,18 +91,31 @@ def _get_active_session():
             pid = data.get("piece_id")
             print(f"    [active] student_id={sid}, piece_id={pid}")
             return sid, pid
+        if resp.status_code == 404:
+            print("    [active] 404 — Waiting for student to click Start in the app…")
     except Exception as e:
         print(f"    [active] Could not fetch active session: {e}")
     return None
 
 
+# Cache (student_id, piece_id) when we have an active session so we still have it
+# after the student clicks "Stop" (which clears active before the 5s silence fires).
+_cached_active: tuple = (None, None)
+
+
 def _send_session(events, session_start, session_end, total_notes):
     """POST collected events to the backend API."""
+    global _cached_active
     active = _get_active_session()
-    if active is None:
-        print("\n⏸ No active session — waiting for student to start practicing.")
-        return
-    student_id, piece_id = active
+    if active is not None:
+        _cached_active = active
+    student_id, piece_id = _cached_active[0], _cached_active[1]
+    if student_id is None:
+        student_id = STUDENT_ID
+        piece_id = piece_id  # keep None
+        print("\n⚠️ No active session cached — using default STUDENT_ID. Start practicing from the app first.")
+    else:
+        print(f"\n📤 Sending session (student_id={student_id}, piece_id={piece_id})…")
     duration = int((session_end - session_start).total_seconds())
     payload = {
         "device_id": DEVICE_ID,
@@ -110,8 +125,9 @@ def _send_session(events, session_start, session_end, total_notes):
         "duration_seconds": duration,
         "total_notes": total_notes,
         "events": events,
-        "piece_id": piece_id,
     }
+    if piece_id is not None:
+        payload["piece_id"] = piece_id
     try:
         resp = requests.post(f"{API_URL}/sessions", json=payload, timeout=10)
         if resp.ok:

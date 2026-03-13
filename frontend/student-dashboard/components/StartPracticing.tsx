@@ -16,6 +16,7 @@ interface SessionSummary {
   total_notes: number;
 }
 
+/** Must match the device_id used by midi_listener.py (DEVICE_ID env or "keysight-pi"). */
 const DEVICE_ID = "keysight-pi";
 
 function formatDuration(seconds: number): string {

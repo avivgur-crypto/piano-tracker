@@ -47,6 +47,7 @@ async def set_active_session(payload: ActiveSessionRequest):
 
 @router.get("/sessions/active/{device_id}", response_model=ActiveSessionResponse)
 async def get_active_session(device_id: str):
+    print(f"[sessions] get_active_session received device_id={device_id!r}")
     entry = active_sessions.get(device_id)
     if not entry:
         raise HTTPException(status_code=404, detail="No active session for this device")

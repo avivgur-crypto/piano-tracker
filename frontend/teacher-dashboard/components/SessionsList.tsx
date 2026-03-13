@@ -7,6 +7,7 @@ import {
   Loader2,
   Pause,
   Play,
+  RefreshCw,
   Trash2,
   Volume2,
 } from "lucide-react";
@@ -645,6 +646,7 @@ export function SessionsList({ studentId }: Props) {
   const [reports, setReports] = useState<AIReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
+  const [refreshing, setRefreshing] = useState(false);
 
   const [pianoReady, setPianoReady] = useState(false);
   const [pianoLoading, setPianoLoading] = useState(false);
@@ -660,12 +662,13 @@ export function SessionsList({ studentId }: Props) {
   /* ── Fetch data ── */
 
   const fetchAll = useCallback(
-    async (filter: DateFilter = "all") => {
+    async (filter: DateFilter = "all", options?: { silent?: boolean }) => {
       const token = getToken();
       if (!token) {
         setLoading(false);
         return;
       }
+      if (!options?.silent) setLoading(true);
       const headers = { Authorization: `Bearer ${token}` };
       let sessUrl = `${API_URL}/sessions?student_id=${studentId}`;
       if (filter !== "all") sessUrl += `&date_range=${filter}`;
@@ -682,7 +685,7 @@ export function SessionsList({ studentId }: Props) {
       } catch {
         /* network error — ignore */
       } finally {
-        setLoading(false);
+        if (!options?.silent) setLoading(false);
       }
     },
     [studentId]
@@ -690,6 +693,14 @@ export function SessionsList({ studentId }: Props) {
 
   useEffect(() => {
     fetchAll(dateFilter);
+  }, [fetchAll, dateFilter]);
+
+  /* Auto-refresh sessions every 30s so new uploads appear without manual refresh */
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchAll(dateFilter, { silent: true });
+    }, 30_000);
+    return () => clearInterval(interval);
   }, [fetchAll, dateFilter]);
 
   /* ── Enable Audio (user-triggered preload) ── */
@@ -899,21 +910,36 @@ export function SessionsList({ studentId }: Props) {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold text-white">🎹 Sessions</h2>
 
-        {/* Date filter pills */}
-        <div className="flex gap-1.5">
-          {DATE_FILTERS.map((f) => (
-            <button
-              key={f.value}
-              onClick={() => setDateFilter(f.value)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                dateFilter === f.value
-                  ? "bg-[#6C63FF] text-white"
-                  : "bg-white/5 text-zinc-400 hover:bg-white/10 hover:text-zinc-200"
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
+        {/* Date filter pills + Refresh */}
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1.5">
+            {DATE_FILTERS.map((f) => (
+              <button
+                key={f.value}
+                onClick={() => setDateFilter(f.value)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                  dateFilter === f.value
+                    ? "bg-[#6C63FF] text-white"
+                    : "bg-white/5 text-zinc-400 hover:bg-white/10 hover:text-zinc-200"
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              setRefreshing(true);
+              await fetchAll(dateFilter);
+              setRefreshing(false);
+            }}
+            disabled={refreshing || loading}
+            className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-white/10 hover:text-white disabled:opacity-50"
+            title="Refresh sessions"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+          </button>
         </div>
       </div>
 
