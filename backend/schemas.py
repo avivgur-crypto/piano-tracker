@@ -5,10 +5,14 @@ from typing import List, Optional
 # --- Session schemas ---
 
 class SessionEvent(BaseModel):
-    time_offset_ms: int
-    note: str
-    velocity: int
     type: str
+    # Note events (note_on / note_off)
+    time_offset_ms: Optional[int] = None
+    note: Optional[str] = None
+    velocity: Optional[int] = None
+    # Sustain pedal events (type == "sustain")
+    value: Optional[int] = None
+    time: Optional[int] = None
 
 
 class SessionCreate(BaseModel):
