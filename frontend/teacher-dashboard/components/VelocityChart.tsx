@@ -78,7 +78,6 @@ export function VelocityChart() {
               stroke="none"
               fill="#EF444433"
               isAnimationActive={false}
-              baseLine={{ y: 0 }}
             />
           </LineChart>
         </ResponsiveContainer>

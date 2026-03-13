@@ -108,7 +108,7 @@ function SessionRow({
   const stopRef = useRef(false);
 
   const handlePlay = async () => {
-    const Tone = (await import("tone")).default ?? (await import("tone"));
+    const Tone = await import("tone");
     await Tone.start();
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -363,7 +363,7 @@ export function SessionsList({ studentId }: Props) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const Tone = (await import("tone")).default ?? (await import("tone"));
+      const Tone = await import("tone");
       const sampler = new Tone.Sampler({
         urls: PIANO_SAMPLER_URLS,
         baseUrl: PIANO_SAMPLER_BASE_URL,
