@@ -10,7 +10,7 @@ import os
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 
@@ -103,8 +103,12 @@ def _get_active_session():
 _cached_active: tuple = (None, None)
 
 
-def _send_session(events, session_start, session_end, total_notes):
-    """POST collected events to the backend API."""
+def _send_session(events, start_perf, end_perf, total_notes):
+    """POST collected events to the backend API.
+
+    start_perf / end_perf are time.perf_counter() values.
+    Wall-clock ISO timestamps are derived from time.time() for the API payload.
+    """
     global _cached_active
     active = _get_active_session()
     if active is not None:
@@ -115,12 +119,21 @@ def _send_session(events, session_start, session_end, total_notes):
         print("\n⚠️ No active session cached — using default STUDENT_ID. Start practicing from the app first.")
     else:
         print(f"\n📤 Sending session (student_id={student_id}, piece_id={piece_id})…")
-    duration = int((session_end - session_start).total_seconds())
+
+    now_wall = time.time()
+    now_perf = time.perf_counter()
+    started_wall = now_wall - (now_perf - start_perf)
+    ended_wall = now_wall - (now_perf - end_perf)
+    duration = int(end_perf - start_perf)
+
+    started_iso = datetime.fromtimestamp(started_wall, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ended_iso = datetime.fromtimestamp(ended_wall, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     payload = {
         "device_id": DEVICE_ID,
         "student_id": student_id,
-        "started_at": session_start.isoformat() + "Z",
-        "ended_at": session_end.isoformat() + "Z",
+        "started_at": started_iso,
+        "ended_at": ended_iso,
         "duration_seconds": duration,
         "total_notes": total_notes,
         "events": events,
@@ -145,8 +158,7 @@ def listen(port_name: str):
     print(f"{'TIME':<12} {'EVENT':<12} {'NOTE':<8} {'VELOCITY':<20} {'CHANNEL'}")
     print("─" * 65)
 
-    session_start = datetime.utcnow()
-    _perf_start = time.perf_counter()
+    session_start = time.perf_counter()
     note_count = 0
     events = []
     last_note_on_time = time.monotonic()
@@ -158,7 +170,7 @@ def listen(port_name: str):
 
     def _on_silence():
         """Called when silence timeout fires (runs in timer thread)."""
-        nonlocal session_start, _perf_start, note_count, events, session_active, had_cleared_for_current_active
+        nonlocal session_start, note_count, events, session_active, had_cleared_for_current_active
         print(f"\n⏱  Silence detected ({SILENCE_TIMEOUT}s) — sending session…")
         with lock:
             if not events:
@@ -167,13 +179,13 @@ def listen(port_name: str):
             snapshot = list(events)
             snap_count = note_count
             snap_start = session_start
+            end_perf = time.perf_counter()
             events.clear()
             note_count = 0
-            session_start = datetime.utcnow()
-            _perf_start = time.perf_counter()
+            session_start = time.perf_counter()
             session_active = True
             had_cleared_for_current_active = False
-        _send_session(snapshot, snap_start, datetime.utcnow(), snap_count)
+        _send_session(snapshot, snap_start, end_perf, snap_count)
 
     def _reset_silence_timer():
         """Restart the silence countdown."""
@@ -188,9 +200,8 @@ def listen(port_name: str):
     try:
         with mido.open_input(port_name) as inport:
             for msg in inport:
-                now = datetime.utcnow()
                 now_perf = time.perf_counter()
-                elapsed = now_perf - _perf_start
+                elapsed = now_perf - session_start
                 elapsed_ms = elapsed * 1000.0
                 timestamp = f"{int(elapsed // 60):02d}:{elapsed % 60:05.2f}"
 
@@ -209,10 +220,9 @@ def listen(port_name: str):
                             if not had_cleared_for_current_active:
                                 events.clear()
                                 note_count = 0
-                                session_start = now
-                                _perf_start = now_perf
+                                session_start = now_perf
                                 had_cleared_for_current_active = True
-                        elapsed_ms = (now_perf - _perf_start) * 1000.0
+                        elapsed_ms = (now_perf - session_start) * 1000.0
                         note_count += 1
                         events.append({
                             "time_offset_ms": elapsed_ms,
@@ -250,14 +260,13 @@ def listen(port_name: str):
                                 events.append({
                                     "type": "sustain",
                                     "value": msg.value,
-                                    "time": (now_perf - _perf_start) * 1000.0,
+                                    "time": (now_perf - session_start) * 1000.0,
                                 })
                             elif not had_cleared_for_current_active and active is not None:
                                 _cached_active = active
                                 events.clear()
                                 note_count = 0
-                                session_start = now
-                                _perf_start = now_perf
+                                session_start = now_perf
                                 had_cleared_for_current_active = True
                                 events.append({
                                     "type": "sustain",
@@ -281,12 +290,13 @@ def listen(port_name: str):
             snapshot = list(events)
             snap_count = note_count
             snap_start = session_start
+        end_perf = time.perf_counter()
         if snapshot:
             print("\n\n📤  Sending remaining events before exit…")
-            _send_session(snapshot, snap_start, datetime.utcnow(), snap_count)
+            _send_session(snapshot, snap_start, end_perf, snap_count)
         else:
             print("\n\n    (no unsent events)")
-        duration = (datetime.utcnow() - snap_start).total_seconds()
+        duration = end_perf - snap_start
         minutes = int(duration // 60)
         seconds = duration % 60
         print(f"\n📊  Session Summary")
