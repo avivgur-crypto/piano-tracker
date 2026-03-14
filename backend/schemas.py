@@ -6,8 +6,8 @@ from typing import List, Optional
 
 class SessionEvent(BaseModel):
     type: str
-    # Note events (note_on / note_off)
-    time_offset_ms: Optional[int] = None
+    # Note events (note_on / note_off); float for high-resolution timing from Pi
+    time_offset_ms: Optional[float] = None
     note: Optional[str] = None
     velocity: Optional[int] = None
     # Sustain pedal events (type == "sustain")
