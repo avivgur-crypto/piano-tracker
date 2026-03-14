@@ -12,7 +12,7 @@ class SessionEvent(BaseModel):
     velocity: Optional[int] = None
     # Sustain pedal events (type == "sustain")
     value: Optional[int] = None
-    time: Optional[int] = None
+    time: Optional[float] = None
 
 
 class SessionCreate(BaseModel):

@@ -63,7 +63,7 @@ def compare_midi_to_score(
 
     # Build note-off map to get duration (time_offset_ms of next same note off, or estimate)
     note_offs = {i: e for i, e in enumerate(event_list) if e.get("type") in ("note_off", "off") or "off" in str(e.get("type", "")).lower()}
-    by_note_time: Dict[int, List[Dict]] = {}
+    by_note_time: Dict[float, List[Dict]] = {}
     for i, e in enumerate(event_list):
         t = e.get("time_offset_ms", 0)
         if t not in by_note_time:
