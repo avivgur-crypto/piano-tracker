@@ -16,8 +16,8 @@ interface SessionSummary {
   total_notes: number;
 }
 
-/** Must match the device_id used by midi_listener.py (DEVICE_ID env or "keysight-pi"). */
-const DEVICE_ID = "keysight-pi";
+/** Must match the device_id used by midi_listener.py. Set NEXT_PUBLIC_DEVICE_ID in .env.local to override. */
+const DEVICE_ID = process.env.NEXT_PUBLIC_DEVICE_ID ?? "keysight-pi";
 
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -34,7 +34,8 @@ function pieceDisplayName(pieceId: number | null, pieces: Piece[]): string {
 export function StartPracticing() {
   const [pieces, setPieces] = useState<Piece[]>([]);
   const [selectedPieceId, setSelectedPieceId] = useState<string>("free");
-  const [isLive, setIsLive] = useState(false);
+  /** True when this device has an active session (we are "live"); shows Stop button. */
+  const [activeSession, setActiveSession] = useState(false);
   const [loading, setLoading] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [lastSession, setLastSession] = useState<SessionSummary | null>(null);
@@ -70,28 +71,33 @@ export function StartPracticing() {
         if (res.ok) {
           const data = await res.json();
           const studentId = getStudentId();
-          if (studentId && data.student_id === studentId) {
-            setIsLive(true);
-            if (data.piece_id) setSelectedPieceId(String(data.piece_id));
+          if (studentId != null && Number(data.student_id) === studentId) {
+            setActiveSession(true);
+            if (data.piece_id != null) setSelectedPieceId(String(data.piece_id));
+          } else {
+            setActiveSession(false);
           }
+        } else {
+          setActiveSession(false);
         }
       } catch {
-        /* ignore */
+        setActiveSession(false);
       }
     };
     checkActive();
   }, []);
 
   const handleStart = async () => {
+    if (activeSession) return;
     const token = getStudentToken();
     const studentId = getStudentId();
-    if (!token || !studentId) return;
+    if (!token || studentId == null) return;
 
     setLoading(true);
     try {
       const body: Record<string, unknown> = {
         device_id: DEVICE_ID,
-        student_id: studentId,
+        student_id: Number(studentId),
       };
       if (selectedPieceId !== "free") {
         body.piece_id = Number(selectedPieceId);
@@ -105,7 +111,7 @@ export function StartPracticing() {
         },
         body: JSON.stringify(body),
       });
-      if (res.ok) setIsLive(true);
+      if (res.ok) setActiveSession(true);
     } catch {
       /* ignore */
     } finally {
@@ -121,9 +127,10 @@ export function StartPracticing() {
   }, []);
 
   const handleStop = async () => {
+    if (!activeSession) return;
     const token = getStudentToken();
     const studentId = getStudentId();
-    if (!token || !studentId) return;
+    if (!token || studentId == null) return;
 
     setLoading(true);
     try {
@@ -131,7 +138,7 @@ export function StartPracticing() {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
-      setIsLive(false);
+      setActiveSession(false);
       setStopping(true);
       setLoading(false);
 
@@ -210,7 +217,7 @@ export function StartPracticing() {
             {lastSession.total_notes} notes played
           </p>
         </div>
-      ) : isLive ? (
+      ) : activeSession ? (
         <div className="flex flex-col items-center gap-4">
           <div className="flex items-center gap-2 rounded-xl bg-[#1a2a1a] px-5 py-3">
             <span className="relative flex h-3 w-3">
@@ -222,6 +229,7 @@ export function StartPracticing() {
             </span>
           </div>
           <button
+            type="button"
             onClick={handleStop}
             disabled={loading}
             className="rounded-xl bg-red-600 px-8 py-3 text-lg font-bold text-white shadow-lg transition hover:bg-red-700 disabled:opacity-50"
@@ -253,6 +261,7 @@ export function StartPracticing() {
             </select>
           </div>
           <button
+            type="button"
             onClick={handleStart}
             disabled={loading}
             className="rounded-xl bg-[#58CC02] px-8 py-3 text-lg font-bold text-[#1C1F2E] shadow-lg shadow-[#58CC02]/30 transition hover:bg-[#4AB800] disabled:opacity-50"

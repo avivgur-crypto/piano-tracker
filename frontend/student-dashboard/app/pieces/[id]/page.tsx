@@ -20,7 +20,8 @@ type PieceData = {
   created_at: string;
 };
 
-const DEVICE_ID = "keysight-pi";
+/** Must match midi_listener.py. Set NEXT_PUBLIC_DEVICE_ID in .env.local to override. */
+const DEVICE_ID = process.env.NEXT_PUBLIC_DEVICE_ID ?? "keysight-pi";
 
 export default function PieceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -51,7 +52,7 @@ export default function PieceDetailPage() {
 
   useEffect(() => { fetchPiece(); }, [fetchPiece]);
 
-  // Check if already practicing this piece
+  // Check if already practicing this piece (active session for this device + student + piece)
   useEffect(() => {
     (async () => {
       try {
@@ -59,11 +60,21 @@ export default function PieceDetailPage() {
         if (res.ok) {
           const data = await res.json();
           const studentId = getStudentId();
-          if (studentId && data.student_id === studentId && data.piece_id === Number(id)) {
+          if (
+            studentId != null &&
+            Number(data.student_id) === studentId &&
+            Number(data.piece_id) === Number(id)
+          ) {
             setPracticing(true);
+          } else {
+            setPracticing(false);
           }
+        } else {
+          setPracticing(false);
         }
-      } catch { /* ignore */ }
+      } catch {
+        setPracticing(false);
+      }
     })();
   }, [id]);
 
@@ -95,9 +106,10 @@ export default function PieceDetailPage() {
   }, [piece?.musicxml_data]);
 
   const handleStartPractice = async () => {
+    if (practicing) return;
     const token = getStudentToken();
     const studentId = getStudentId();
-    if (!token || !studentId) return;
+    if (!token || studentId == null) return;
 
     setStartingPractice(true);
     try {
@@ -109,7 +121,7 @@ export default function PieceDetailPage() {
         },
         body: JSON.stringify({
           device_id: DEVICE_ID,
-          student_id: studentId,
+          student_id: Number(studentId),
           piece_id: Number(id),
         }),
       });
@@ -119,6 +131,7 @@ export default function PieceDetailPage() {
   };
 
   const handleStopPractice = async () => {
+    if (!practicing) return;
     const token = getStudentToken();
     if (!token) return;
     try {
@@ -191,6 +204,7 @@ export default function PieceDetailPage() {
                   <span className="text-sm font-semibold text-[#A3FFB5]">Practicing now 🎹</span>
                 </div>
                 <button
+                  type="button"
                   onClick={handleStopPractice}
                   className="rounded-xl bg-red-600 px-5 py-2 text-sm font-bold text-white transition hover:bg-red-700"
                 >
@@ -199,6 +213,7 @@ export default function PieceDetailPage() {
               </div>
             ) : (
               <button
+                type="button"
                 onClick={handleStartPractice}
                 disabled={startingPractice}
                 className="rounded-xl bg-[#58CC02] px-6 py-3 text-lg font-bold text-[#1C1F2E] shadow-lg shadow-[#58CC02]/30 transition hover:bg-[#4AB800] disabled:opacity-50"
