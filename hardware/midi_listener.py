@@ -73,7 +73,7 @@ def pick_port(ports: list) -> str:
             pass
         print("Invalid choice. Try again.")
 
-API_URL = os.environ.get("API_URL", "https://piano-tracker-backend-production.up.railway.app")
+API_URL = os.environ.get("API_URL", "https://piano-tracker-api-production-d7b7.up.railway.app")
 DEVICE_ID = os.environ.get("DEVICE_ID", "keysight-pi")
 STUDENT_ID = int(os.environ.get("STUDENT_ID", "2"))
 # Session is uploaded to the server after this many seconds with no new notes (or on Ctrl+C).
