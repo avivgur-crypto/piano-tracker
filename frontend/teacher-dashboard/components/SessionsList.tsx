@@ -93,19 +93,6 @@ function noteOnEvents(events: SessionEvent[]) {
   );
 }
 
-/** Time in seconds for scheduling. Notes use time_offset_ms; sustain uses time (ms). */
-function getEventTimeSec(e: SessionEvent): number {
-  if (e.type === "sustain" && e.time != null) return e.time / 1000;
-  return (e.time_offset_ms ?? 0) / 1000;
-}
-
-/** Sort order for same-time events: pedal up first, then note_off, note_on, then pedal down. */
-function eventSortOrder(e: SessionEvent): number {
-  if (e.type === "sustain") return (e.value ?? 0) > 0 ? 3 : 0;
-  if (e.type === "note_off" || (e.type === "note_on" && (e.velocity ?? 0) === 0)) return 1;
-  return 2; // note_on
-}
-
 function buildNoteDistribution(events: SessionEvent[]) {
   const counts: Record<string, number> = {};
   for (const e of noteOnEvents(events)) {
@@ -146,6 +133,15 @@ let _instrument: any = null;
 let _instType: "sampler" | "synth" | null = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _loadPromise: Promise<any> | null = null;
+
+let _playStartWallMs = 0;
+let _playStartOffsetSec = 0;
+let _playEndTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function getPlaybackElapsedSec(): number {
+  if (_playStartWallMs === 0) return 0;
+  return (performance.now() - _playStartWallMs) / 1000 + _playStartOffsetSec;
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function _initFallbackSynth(Tone: any) {
@@ -217,13 +213,13 @@ async function ensurePiano() {
   return { tone: Tone, instrument: _instrument!, type: _instType! };
 }
 
-/** Stop Transport and release all sounding notes (synchronous-safe). */
 function haltPlayback() {
-  if (!_tone) return;
-  const transport = _tone.getTransport();
-  transport.stop();
-  transport.cancel();
-  transport.seconds = 0;
+  if (_playEndTimeout) {
+    clearTimeout(_playEndTimeout);
+    _playEndTimeout = null;
+  }
+  _playStartWallMs = 0;
+  _playStartOffsetSec = 0;
   _instrument?.releaseAll?.();
 }
 
@@ -276,12 +272,12 @@ function ProgressBar({
     const tick = () => {
       if (
         !isDragging.current &&
-        _tone &&
+        _playStartWallMs > 0 &&
         fillRef.current &&
         headRef.current &&
         textRef.current
       ) {
-        const sec = _tone.getTransport().seconds;
+        const sec = getPlaybackElapsedSec();
         const pct = totalSec > 0 ? Math.min(100, (sec / totalSec) * 100) : 0;
         fillRef.current.style.width = `${pct}%`;
         headRef.current.style.left = `${pct}%`;
@@ -718,7 +714,7 @@ export function SessionsList({ studentId }: Props) {
     }
   }, []);
 
-  /* ── Transport-scheduled playback ── */
+  /* ── Direct AudioContext-scheduled playback (bypasses Transport BPM) ── */
 
   const handlePlay = useCallback(
     async (sessionId: number, events: SessionEvent[], durationSec: number) => {
@@ -732,14 +728,6 @@ export function SessionsList({ studentId }: Props) {
         const { tone, instrument } = await ensurePiano();
         setPianoReady(true);
 
-        const transport = tone.getTransport();
-        transport.cancel();
-        transport.stop();
-        transport.seconds = 0;
-
-        // Use absolute timestamps: time_offset_ms (notes) and time (sustain) are ms from session start.
-        // Schedule each event at exact transport time = (ms / 1000) so rhythm and duration are preserved.
-
         const ons = noteOnEvents(events);
         const noteOffs = events.filter(
           (e) =>
@@ -747,80 +735,38 @@ export function SessionsList({ studentId }: Props) {
             (e.type === "note_on" && (e.velocity ?? 0) === 0)
         );
 
-        /** Duration in seconds for a note_on: time from this note_on to its matching note_off. */
-        function durationSecForNoteOn(
-          onMs: number,
-          note: string
-        ): number {
+        function durationForOn(onMs: number, note: string): number {
           const off = noteOffs.find(
             (e) => e.note === note && (e.time_offset_ms ?? 0) > onMs
           );
-          const offMs = off ? (off.time_offset_ms ?? onMs) : onMs;
-          return Math.max(0.05, (offMs - onMs) / 1000);
+          return Math.max(0.05, ((off?.time_offset_ms ?? onMs) - onMs) / 1000);
         }
 
-        // Sustain: schedule at exact time (sustain uses `time` in ms)
-        let pedalDown = false;
-        const heldNotes = new Set<string>();
-        const sustainEvents = events.filter((e) => e.type === "sustain");
-        sustainEvents.sort(
-          (a, b) => (getEventTimeSec(a) - getEventTimeSec(b)) || 0
-        );
-        for (const evt of sustainEvents) {
-          const timeSec = getEventTimeSec(evt);
-          const value = evt.value ?? 0;
-          transport.schedule((audioTime: number) => {
-            if (value > 0) {
-              pedalDown = true;
-              (instrument as { pedalDown?: () => void }).pedalDown?.();
-            } else {
-              for (const n of heldNotes) {
-                instrument.triggerRelease(n, audioTime);
-              }
-              heldNotes.clear();
-              pedalDown = false;
-              (instrument as { pedalUp?: () => void }).pedalUp?.();
-            }
-          }, timeSec);
-        }
+        const t0 = tone.now() + 0.05;
 
-        // Note-ons: schedule triggerAttackRelease at exact time_offset_ms with duration to matching note_off
-        // (Duration is preserved; no separate note_off scheduling so we avoid double-release.)
         for (const evt of ons) {
-          const onMs = evt.time_offset_ms ?? 0;
-          const timeSec = onMs / 1000;
-          const duration = durationSecForNoteOn(onMs, evt.note!);
-          const vel = Math.min(
-            1,
-            Math.max(0.3, ((evt.velocity ?? 0) / 127) * 1.5)
-          );
-          transport.schedule((audioTime: number) => {
-            instrument.triggerAttackRelease(evt.note!, duration, audioTime, vel);
-          }, timeSec);
+          const tSec = (evt.time_offset_ms ?? 0) / 1000;
+          const dur = durationForOn(evt.time_offset_ms ?? 0, evt.note!);
+          const vel = (evt.velocity ?? 0) / 127;
+          instrument.triggerAttackRelease(evt.note!, dur, t0 + tSec, vel);
         }
 
-        const lastNoteMs = ons.length > 0 ? (ons[ons.length - 1].time_offset_ms ?? 0) : 0;
-        const lastSustainMs = Math.max(
-          0,
-          ...events.filter((e) => e.type === "sustain").map((e) => e.time ?? 0)
-        );
-        const lastMs = Math.max(lastNoteMs, lastSustainMs);
+        const lastMs = ons.length > 0 ? (ons[ons.length - 1].time_offset_ms ?? 0) : 0;
         const totalSec = Math.max(lastMs / 1000, durationSec);
 
-        transport.schedule((audioTime: number) => {
-          tone.Draw.schedule(() => {
-            setPlayingId(null);
-            setPlaybackTotalSec(0);
-          }, audioTime);
-        }, totalSec + 1.5);
+        _playStartWallMs = performance.now();
+        _playStartOffsetSec = 0;
+        _playEndTimeout = setTimeout(() => {
+          setPlayingId(null);
+          setPlaybackTotalSec(0);
+          _playStartWallMs = 0;
+        }, (totalSec + 1.5) * 1000);
 
         playingEventsRef.current = events;
         playingTotalRef.current = totalSec;
         setLoadingPlayId(null);
         setPlayingId(sessionId);
         setPlaybackTotalSec(totalSec);
-
-        transport.start();
       } catch (err) {
         setPianoError(
           err instanceof Error ? err.message : "Playback failed"
@@ -840,15 +786,16 @@ export function SessionsList({ studentId }: Props) {
     setPlaybackTotalSec(0);
   }, []);
 
-  /* ── Seek: re-schedule from timeSec using same absolute timestamps (time_offset_ms / 1000) ── */
+  /* ── Seek: cancel current notes and re-schedule from seekTime ── */
 
   const handleSeek = useCallback((timeSec: number) => {
     if (!_tone || !_instrument) return;
 
-    const transport = _tone.getTransport();
-    transport.stop();
-    transport.cancel();
     _instrument.releaseAll();
+    if (_playEndTimeout) {
+      clearTimeout(_playEndTimeout);
+      _playEndTimeout = null;
+    }
 
     const events = playingEventsRef.current;
     const totalSec = playingTotalRef.current;
@@ -857,66 +804,30 @@ export function SessionsList({ studentId }: Props) {
         e.type === "note_off" ||
         (e.type === "note_on" && (e.velocity ?? 0) === 0)
     );
-    function durationSecForNoteOn(onMs: number, note: string): number {
+    function durationForOn(onMs: number, note: string): number {
       const off = noteOffs.find(
         (e) => e.note === note && (e.time_offset_ms ?? 0) > onMs
       );
-      const offMs = off ? (off.time_offset_ms ?? onMs) : onMs;
-      return Math.max(0.05, (offMs - onMs) / 1000);
+      return Math.max(0.05, ((off?.time_offset_ms ?? onMs) - onMs) / 1000);
     }
 
-    let pedalDown = false;
-    const heldNotes = new Set<string>();
+    const t0 = _tone.now() + 0.05;
 
-    // Sustain events at or after timeSec (same absolute time as play)
-    const sustainEvents = events.filter((e) => e.type === "sustain");
-    for (const evt of sustainEvents) {
-      const evtTime = getEventTimeSec(evt);
-      if (evtTime < timeSec - 0.001) {
-        pedalDown = (evt.value ?? 0) > 0;
-        if (!pedalDown) heldNotes.clear();
-        continue;
-      }
-      const value = evt.value ?? 0;
-      transport.schedule((audioTime: number) => {
-        if (value > 0) {
-          pedalDown = true;
-          (_instrument as { pedalDown?: () => void }).pedalDown?.();
-        } else {
-          for (const note of heldNotes) {
-            _instrument.triggerRelease(note, audioTime);
-          }
-          heldNotes.clear();
-          pedalDown = false;
-          (_instrument as { pedalUp?: () => void }).pedalUp?.();
-        }
-      }, evtTime);
-    }
-
-    // Note-ons at or after timeSec: schedule at exact time_offset_ms with duration to note_off
     for (const evt of noteOnEvents(events)) {
-      const onMs = evt.time_offset_ms ?? 0;
-      const evtTime = onMs / 1000;
-      if (evtTime < timeSec - 0.001) continue;
-      const duration = durationSecForNoteOn(onMs, evt.note!);
-      const vel = Math.min(
-        1,
-        Math.max(0.3, ((evt.velocity ?? 0) / 127) * 1.5)
-      );
-      transport.schedule((audioTime: number) => {
-        _instrument.triggerAttackRelease(evt.note!, duration, audioTime, vel);
-      }, evtTime);
+      const tSec = (evt.time_offset_ms ?? 0) / 1000;
+      if (tSec < timeSec - 0.001) continue;
+      const dur = durationForOn(evt.time_offset_ms ?? 0, evt.note!);
+      const vel = (evt.velocity ?? 0) / 127;
+      _instrument.triggerAttackRelease(evt.note!, dur, t0 + (tSec - timeSec), vel);
     }
 
-    transport.schedule((audioTime: number) => {
-      _tone.Draw.schedule(() => {
-        setPlayingId(null);
-        setPlaybackTotalSec(0);
-      }, audioTime);
-    }, totalSec + 1.5);
-
-    transport.seconds = timeSec;
-    transport.start();
+    _playStartWallMs = performance.now();
+    _playStartOffsetSec = timeSec;
+    _playEndTimeout = setTimeout(() => {
+      setPlayingId(null);
+      setPlaybackTotalSec(0);
+      _playStartWallMs = 0;
+    }, (totalSec - timeSec + 1.5) * 1000);
   }, []);
 
   /* ── Delete session ── */

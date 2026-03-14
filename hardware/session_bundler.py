@@ -129,7 +129,7 @@ def bundle_session(port_name: str):
 
                     total_time += msg.time
                     last_msg_time = time.time()
-                    time_offset_ms = int(total_time * 1000)
+                    time_offset_ms = total_time * 1000.0
 
                     if msg.type == 'note_on' and msg.velocity > 0:
                         events.append({

@@ -146,19 +146,19 @@ def listen(port_name: str):
     print("─" * 65)
 
     session_start = datetime.utcnow()
+    _perf_start = time.perf_counter()
     note_count = 0
     events = []
     last_note_on_time = time.monotonic()
     silence_timer = None
     session_active = True
-    # When we first see an active session (student clicked Start), clear buffer so pre-Start notes aren't uploaded.
     had_cleared_for_current_active = False
 
     lock = threading.Lock()
 
     def _on_silence():
         """Called when silence timeout fires (runs in timer thread)."""
-        nonlocal session_start, note_count, events, session_active, had_cleared_for_current_active
+        nonlocal session_start, _perf_start, note_count, events, session_active, had_cleared_for_current_active
         print(f"\n⏱  Silence detected ({SILENCE_TIMEOUT}s) — sending session…")
         with lock:
             if not events:
@@ -170,6 +170,7 @@ def listen(port_name: str):
             events.clear()
             note_count = 0
             session_start = datetime.utcnow()
+            _perf_start = time.perf_counter()
             session_active = True
             had_cleared_for_current_active = False
         _send_session(snapshot, snap_start, datetime.utcnow(), snap_count)
@@ -188,8 +189,9 @@ def listen(port_name: str):
         with mido.open_input(port_name) as inport:
             for msg in inport:
                 now = datetime.utcnow()
-                elapsed = (now - session_start).total_seconds()
-                elapsed_ms = int(elapsed * 1000)
+                now_perf = time.perf_counter()
+                elapsed = now_perf - _perf_start
+                elapsed_ms = elapsed * 1000.0
                 timestamp = f"{int(elapsed // 60):02d}:{elapsed % 60:05.2f}"
 
                 # ── Note On ────────────────────────────────────────────────
@@ -200,8 +202,6 @@ def listen(port_name: str):
                         f"{timestamp:<12} {'NOTE ON':<12} {note_name:<8} "
                         f"{vel_label:<20} ch={msg.channel + 1}"
                     )
-                    # When active session is first detected (student clicked Start), clear buffer so
-                    # pre-Start noise/silence is not included in the upload.
                     active = _get_active_session()
                     with lock:
                         if active is not None:
@@ -210,10 +210,9 @@ def listen(port_name: str):
                                 events.clear()
                                 note_count = 0
                                 session_start = now
+                                _perf_start = now_perf
                                 had_cleared_for_current_active = True
-                        # Recompute elapsed in case we just reset session_start
-                        elapsed = (now - session_start).total_seconds()
-                        elapsed_ms = int(elapsed * 1000)
+                        elapsed_ms = (now_perf - _perf_start) * 1000.0
                         note_count += 1
                         events.append({
                             "time_offset_ms": elapsed_ms,
@@ -244,29 +243,26 @@ def listen(port_name: str):
                     if msg.control == 64:  # sustain pedal (CC 64)
                         state = "DOWN 🦶" if msg.value >= 64 else "UP"
                         print(f"{timestamp:<12} {'SUSTAIN':<12} {state}")
-                        # Append sustain when we're in an active session (same semantics as notes)
                         if not had_cleared_for_current_active:
                             active = _get_active_session()
                         with lock:
                             if had_cleared_for_current_active:
-                                elapsed = (now - session_start).total_seconds()
-                                elapsed_ms = int(elapsed * 1000)
                                 events.append({
                                     "type": "sustain",
-                                    "value": msg.value,  # 0 = OFF, 127 (or >0) = ON
-                                    "time": elapsed_ms,
+                                    "value": msg.value,
+                                    "time": (now_perf - _perf_start) * 1000.0,
                                 })
                             elif not had_cleared_for_current_active and active is not None:
                                 _cached_active = active
                                 events.clear()
                                 note_count = 0
                                 session_start = now
+                                _perf_start = now_perf
                                 had_cleared_for_current_active = True
-                                elapsed_ms = 0
                                 events.append({
                                     "type": "sustain",
                                     "value": msg.value,
-                                    "time": elapsed_ms,
+                                    "time": 0.0,
                                 })
                     else:
                         print(
